@@ -8,6 +8,8 @@ mod input;
 mod console;
 mod font;
 mod game_objects;
+mod ball;
+mod square;
 
 use winit::{
     event::{Event, WindowEvent, KeyboardInput},
@@ -60,6 +62,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         match action {
                             InputAction::MoveCursor(dx, dy) => {
                                 graphics.move_cursor(dx, dy);
+                                
+                                // Output cursor info to console
+                                let (cursor_x, cursor_y) = graphics.get_cursor_position();
+                                let object_names = interpreter.get_game_objects().find_objects_at_grid_with_names(cursor_x, cursor_y);
+                                
+                                let coord_text = format!("Cursor: ({}, {})", cursor_x, cursor_y);
+                                let info_text = if object_names.is_empty() {
+                                    coord_text
+                                } else {
+                                    format!("{} - Objects: {}", coord_text, object_names.join(", "))
+                                };
+                                
+                                console.add_line(info_text);
                                 redraw_requested = true;
                             }
                             InputAction::ToggleCell => {

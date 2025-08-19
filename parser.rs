@@ -315,6 +315,51 @@ impl Parser {
 
     fn primary(&mut self) -> Result<Expr, ParseError> {
         match &self.peek().token_type {
+            TokenType::Identifier(name) => {
+                // Check for special 'create' syntax
+                if name == "create" {
+                    self.advance(); // consume 'create'
+                    
+                    // Expect object type identifier
+                    if let TokenType::Identifier(object_type) = &self.peek().token_type {
+                        let object_type = object_type.clone();
+                        self.advance(); // consume object type
+                        
+                        // Check for optional parentheses
+                        let arguments = if self.check(&TokenType::LeftParen) {
+                            self.advance(); // consume '('
+                            let mut args = Vec::new();
+                            
+                            if !self.check(&TokenType::RightParen) {
+                                loop {
+                                    args.push(self.expression()?);
+                                    if !self.match_token(&TokenType::Comma) {
+                                        break;
+                                    }
+                                }
+                            }
+                            
+                            self.consume(&TokenType::RightParen, "Expected ')' after arguments")?;
+                            args
+                        } else {
+                            Vec::new() // No parentheses = no arguments
+                        };
+                        
+                        return Ok(Expr::CreateCall { object_type, arguments });
+                    } else {
+                        return Err(ParseError::Expected {
+                            expected: "object type".to_string(),
+                            found: self.peek().clone(),
+                            message: "Expected object type after 'create'".to_string(),
+                        });
+                    }
+                }
+                
+                // Regular identifier
+                let name = name.clone();
+                self.advance();
+                Ok(Expr::Identifier(name))
+            },
             TokenType::Number(n) => {
                 let n = *n;
                 self.advance();
@@ -324,11 +369,6 @@ impl Parser {
                 let s = s.clone();
                 self.advance();
                 Ok(Expr::String(s))
-            },
-            TokenType::Identifier(name) => {
-                let name = name.clone();
-                self.advance();
-                Ok(Expr::Identifier(name))
             },
             TokenType::LeftParen => {
                 self.advance();

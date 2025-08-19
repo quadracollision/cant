@@ -1,27 +1,6 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, Ordering};
-
-static NEXT_ID: AtomicU32 = AtomicU32::new(1);
-
-#[derive(Debug, Clone)]
-pub struct Ball {
-    pub id: u32,
-    pub x: f64,
-    pub y: f64,
-    pub speed: f64,
-    pub direction: f64, // angle in radians
-    pub velocity_x: f64,
-    pub velocity_y: f64,
-    pub script: Option<String>, // script to execute on collision
-}
-
-#[derive(Debug, Clone)]
-pub struct Square {
-    pub id: u32,
-    pub x: f64,
-    pub y: f64,
-    pub script: Option<String>, // script to execute when collided with
-}
+use crate::ball::Ball;
+use crate::square::Square;
 
 #[derive(Debug, Clone)]
 pub enum GameObject {
@@ -39,8 +18,8 @@ impl GameObject {
     
     pub fn get_position(&self) -> (f64, f64) {
         match self {
-            GameObject::Ball(ball) => (ball.x, ball.y),
-            GameObject::Square(square) => (square.x, square.y),
+            GameObject::Ball(ball) => ball.get_position(),
+            GameObject::Square(square) => square.get_position(),
         }
     }
 }
@@ -61,17 +40,8 @@ impl GameObjectManager {
     }
     
     pub fn create_ball(&mut self, x: f64, y: f64, speed: f64, direction: f64) -> u32 {
-        let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
-        let ball = Ball {
-            id,
-            x,
-            y,
-            speed,
-            direction,
-            velocity_x: speed * direction.cos(),
-            velocity_y: speed * direction.sin(),
-            script: None,
-        };
+        let ball = Ball::new(x, y, speed, direction);
+        let id = ball.id;
         
         self.objects.insert(id, GameObject::Ball(ball));
         self.balls.insert(id, id);
@@ -79,13 +49,8 @@ impl GameObjectManager {
     }
     
     pub fn create_square(&mut self, x: f64, y: f64) -> u32 {
-        let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
-        let square = Square {
-            id,
-            x,
-            y,
-            script: None,
-        };
+        let square = Square::new(x, y);
+        let id = square.id;
         
         self.objects.insert(id, GameObject::Square(square));
         self.squares.insert(id, id);
@@ -136,8 +101,7 @@ impl GameObjectManager {
         
         for (id, new_x, new_y) in updates {
             if let Some(GameObject::Ball(ball)) = self.objects.get_mut(&id) {
-                ball.x = new_x;
-                ball.y = new_y;
+                ball.set_position(new_x, new_y);
             }
         }
     }
@@ -165,5 +129,29 @@ impl GameObjectManager {
         }
         
         collisions
+    }
+    
+    pub fn find_objects_at_grid_with_names(&self, grid_x: u32, grid_y: u32) -> Vec<String> {
+        let mut object_names = Vec::new();
+        let tolerance = 0.5;
+        
+        for (_id, obj) in &self.objects {
+            match obj {
+                GameObject::Ball(ball) => {
+                    let (obj_x, obj_y) = ball.get_position();
+                    if (obj_x - grid_x as f64).abs() < tolerance && (obj_y - grid_y as f64).abs() < tolerance {
+                        object_names.push(ball.get_friendly_name());
+                    }
+                }
+                GameObject::Square(square) => {
+                    let (obj_x, obj_y) = square.get_position();
+                    if (obj_x - grid_x as f64).abs() < tolerance && (obj_y - grid_y as f64).abs() < tolerance {
+                        object_names.push(square.get_friendly_name());
+                    }
+                }
+            }
+        }
+        
+        object_names
     }
 }

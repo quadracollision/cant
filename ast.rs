@@ -18,6 +18,11 @@ pub enum Expr {
         callee: Box<Expr>,
         arguments: Vec<Expr>,
     },
+    // New: Special syntax for create commands
+    CreateCall {
+        object_type: String,
+        arguments: Vec<Expr>,
+    },
     Assignment {
         name: String,
         value: Box<Expr>,
@@ -96,6 +101,14 @@ impl fmt::Display for Expr {
             },
             Expr::Call { callee, arguments } => {
                 write!(f, "{}(", callee)?;
+                for (i, arg) in arguments.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{}", arg)?;
+                }
+                write!(f, ")")
+            },
+            Expr::CreateCall { object_type, arguments } => {
+                write!(f, "create {}(", object_type)?;
                 for (i, arg) in arguments.iter().enumerate() {
                     if i > 0 { write!(f, ", ")?; }
                     write!(f, "{}", arg)?;

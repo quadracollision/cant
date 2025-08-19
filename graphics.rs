@@ -85,27 +85,49 @@ impl GraphicsRenderer {
             );
         }
         
-        // Render game objects
+        // Render game objects with proper dynamic scaling
         if let Some(objects) = game_objects {
-            Self::render_game_objects_static(frame, objects, self.width, self.height, self.tile_size);
+            Self::render_game_objects_static(
+                frame, objects, self.width, self.height, 
+                self.grid_width, self.grid_height, self.tile_size
+            );
         }
         
         // Render console with font
         Self::render_console_static(frame, console_lines, self.width, self.height);
     }
     
-    fn render_game_objects_static(frame: &mut [u8], objects: &GameObjectManager, width: u32, height: u32, tile_size: u32) {
+    fn render_game_objects_static(frame: &mut [u8], objects: &GameObjectManager, width: u32, height: u32, grid_width: u32, grid_height: u32, tile_size: u32) {
+        // Calculate the same dynamic tile size as the grid rendering
+        let available_width = width.saturating_sub(GRID_PADDING * 2);
+        let available_height = height.saturating_sub(CONSOLE_HEIGHT + GRID_PADDING * 2);
+        
+        let max_tile_width = if grid_width > 0 { available_width / grid_width } else { tile_size };
+        let max_tile_height = if grid_height > 0 { available_height / grid_height } else { tile_size };
+        let dynamic_tile_size = max_tile_width.min(max_tile_height).max(1);
+        
+        let grid_pixel_width = grid_width * dynamic_tile_size;
+        let grid_pixel_height = grid_height * dynamic_tile_size;
+        
+        // Center the grid in the available space (same as grid rendering)
+        let start_x = GRID_PADDING + (available_width.saturating_sub(grid_pixel_width)) / 2;
+        let start_y = GRID_PADDING + (available_height.saturating_sub(grid_pixel_height)) / 2;
+        
         for obj in objects.get_all_objects().values() {
             match obj {
                 GameObject::Ball(ball) => {
-                    let screen_x = (ball.x * tile_size as f64) as u32 + GRID_PADDING;
-                    let screen_y = (ball.y * tile_size as f64) as u32 + GRID_PADDING;
-                    Self::draw_circle_static(frame, screen_x, screen_y, tile_size / 3, [255, 100, 100, 255], width, height);
+                    // Center the ball within its grid cell
+                    let screen_x = start_x + (ball.x * dynamic_tile_size as f64) as u32 + dynamic_tile_size / 2;
+                    let screen_y = start_y + (ball.y * dynamic_tile_size as f64) as u32 + dynamic_tile_size / 2;
+                    let radius = (dynamic_tile_size as f64 * 0.4) as u32;
+                    Self::draw_circle_static(frame, screen_x, screen_y, radius, [255, 100, 100, 255], width, height);
                 },
                 GameObject::Square(square) => {
-                    let screen_x = (square.x * tile_size as f64) as u32 + GRID_PADDING;
-                    let screen_y = (square.y * tile_size as f64) as u32 + GRID_PADDING;
-                    Self::draw_square_static(frame, screen_x, screen_y, tile_size / 2, [100, 100, 255, 255], width, height);
+                    // Position square at the top-left corner of its grid cell and fill the entire cell
+                    let screen_x = start_x + (square.x * dynamic_tile_size as f64) as u32;
+                    let screen_y = start_y + (square.y * dynamic_tile_size as f64) as u32;
+                    let size = dynamic_tile_size; // Use full tile size to occupy entire grid cell
+                    Self::draw_square_static(frame, screen_x, screen_y, size, [100, 100, 255, 255], width, height);
                 }
             }
         }
@@ -279,17 +301,18 @@ impl GraphicsRenderer {
                     [32, 32, 32, 255] // Background color for empty areas
                 };
                 
-                let is_cursor = x == cursor_x && y == cursor_y;
-                if is_cursor {
-                    // Highlight cursor position
-                    Self::draw_cell_static(frame, cell_x, cell_y, [255, 255, 0, 255], width, height, dynamic_tile_size);
-                } else {
-                    Self::draw_cell_static(frame, cell_x, cell_y, color, width, height, dynamic_tile_size);
-                }
+                // Always draw the normal cell (no cursor highlighting here)
+                Self::draw_cell_static(frame, cell_x, cell_y, color, width, height, dynamic_tile_size);
             }
         }
         
+        // Draw grid lines first
         Self::draw_grid_lines_static(frame, start_x, start_y, grid_pixel_width, grid_pixel_height, grid_width, grid_height, width, height, dynamic_tile_size);
+        
+        // Then draw cursor outline on top of everything
+        let cursor_cell_x = start_x + cursor_x * dynamic_tile_size;
+        let cursor_cell_y = start_y + cursor_y * dynamic_tile_size;
+        Self::draw_cell_outline_static(frame, cursor_cell_x, cursor_cell_y, [255, 255, 0, 255], width, height, dynamic_tile_size);
     }
 
     fn draw_cell_static(frame: &mut [u8], x: u32, y: u32, color: [u8; 4], width: u32, height: u32, tile_size: u32) {

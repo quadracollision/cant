@@ -1,19 +1,26 @@
 use std::collections::VecDeque;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::path::Path;
 
 pub struct Console {
     lines: VecDeque<String>,
     max_lines: usize,
     current_command: String,
     prompt: String,
+    log_file: Option<std::fs::File>,
 }
 
 impl Console {
     pub fn new(max_lines: usize) -> Self {
+        let log_file = Self::create_log_file();
+        
         let mut console = Self {
             lines: VecDeque::new(),
             max_lines,
             current_command: String::new(),
             prompt: "cant> ".to_string(),
+            log_file,
         };
         
         console.add_line("CANT Language Interpreter v3.0".to_string());
@@ -24,7 +31,44 @@ impl Console {
         console
     }
 
+    fn create_log_file() -> Option<std::fs::File> {
+        match OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("console.log")
+        {
+            Ok(file) => {
+                println!("Console logging enabled: console.log");
+                Some(file)
+            }
+            Err(e) => {
+                eprintln!("Failed to create console.log: {}", e);
+                None
+            }
+        }
+    }
+
+    fn write_to_log(&mut self, text: &str) {
+        if let Some(ref mut file) = self.log_file {
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            
+            if let Err(e) = writeln!(file, "[{}] {}", timestamp, text) {
+                eprintln!("Failed to write to console.log: {}", e);
+            }
+            
+            // Ensure the log is written immediately
+            let _ = file.flush();
+        }
+    }
+
     pub fn add_line(&mut self, line: String) {
+        // Write to log file first
+        self.write_to_log(&line);
+        
+        // Then add to console display
         self.lines.push_back(line);
         while self.lines.len() > self.max_lines {
             self.lines.pop_front();
@@ -38,11 +82,13 @@ impl Console {
     }
 
     pub fn add_error(&mut self, error: &str) {
-        self.add_line(format!("Error: {}", error));
+        let error_msg = format!("Error: {}", error);
+        self.add_line(error_msg);
     }
 
     pub fn add_command(&mut self, command: &str) {
-        self.add_line(format!("{}{}", self.prompt, command));
+        let command_line = format!("{}{}", self.prompt, command);
+        self.add_line(command_line);
     }
 
     pub fn set_current_command(&mut self, command: String) {
@@ -82,6 +128,7 @@ impl Console {
     }
 
     pub fn clear(&mut self) {
+        self.write_to_log("--- Console cleared ---");
         self.lines.clear();
         self.current_command.clear();
     }

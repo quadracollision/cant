@@ -196,6 +196,50 @@ impl Interpreter {
                     Err(InterpreterError::RuntimeError("Only function names can be called".to_string()))
                 }
             },
+            Expr::CreateCall { object_type, arguments } => {
+                match object_type.as_str() {
+                    "ball" => {
+                        // Default values for optional arguments
+                        let x = if arguments.len() > 0 {
+                            self.evaluate_expression(&arguments[0])?.as_number()
+                                .ok_or_else(|| InterpreterError::TypeError("x must be a number".to_string()))?
+                        } else { 0.0 };
+                        
+                        let y = if arguments.len() > 1 {
+                            self.evaluate_expression(&arguments[1])?.as_number()
+                                .ok_or_else(|| InterpreterError::TypeError("y must be a number".to_string()))?
+                        } else { 0.0 };
+                        
+                        let speed = if arguments.len() > 2 {
+                            self.evaluate_expression(&arguments[2])?.as_number()
+                                .ok_or_else(|| InterpreterError::TypeError("speed must be a number".to_string()))?
+                        } else { 1.0 }; // default speed
+                        
+                        let direction = if arguments.len() > 3 {
+                            self.evaluate_expression(&arguments[3])?.as_number()
+                                .ok_or_else(|| InterpreterError::TypeError("direction must be a number".to_string()))?
+                        } else { 0.0 }; // default direction
+                        
+                        let id = self.game_objects.create_ball(x, y, speed, direction);
+                        Ok(Value::GameObject(id))
+                    },
+                    "square" => {
+                        let x = if arguments.len() > 0 {
+                            self.evaluate_expression(&arguments[0])?.as_number()
+                                .ok_or_else(|| InterpreterError::TypeError("x must be a number".to_string()))?
+                        } else { 0.0 };
+                        
+                        let y = if arguments.len() > 1 {
+                            self.evaluate_expression(&arguments[1])?.as_number()
+                                .ok_or_else(|| InterpreterError::TypeError("y must be a number".to_string()))?
+                        } else { 0.0 };
+                        
+                        let id = self.game_objects.create_square(x, y);
+                        Ok(Value::GameObject(id))
+                    },
+                    _ => Err(InterpreterError::RuntimeError(format!("Unknown object type: {}", object_type)))
+                }
+            },
             Expr::Assignment { name, value } => {
                 let val = self.evaluate_expression(value)?;
                 self.environment.insert(name.clone(), val.clone());
