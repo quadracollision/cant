@@ -81,6 +81,10 @@ pub enum Stmt {
     Stop,   // New: stop command to restore pre-play state
     ClearBalls,   // New: clear all balls command
     ClearSquares, // New: clear all squares command
+    Destroy {     // New: destroy command
+        object_type: String,
+        arguments: Vec<Expr>,
+    },
 }
 
 #[derive(Debug, Clone)]

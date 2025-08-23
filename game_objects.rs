@@ -164,8 +164,10 @@ impl GameObjectManager {
                         return Some(*id);
                     }
                 },
-                GameObject::Square(_) => {
-                    // Could add square naming later
+                GameObject::Square(square) => {
+                    if square.get_friendly_name() == name {
+                        return Some(*id);
+                    }
                 }
             }
         }

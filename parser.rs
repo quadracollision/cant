@@ -52,11 +52,50 @@ impl Parser {
             self.stop_statement()
         } else if self.match_token(&TokenType::Clear) {
             self.clear_statement()
+        } else if self.match_token(&TokenType::Destroy) {  // Add this
+            self.destroy_statement()
         } else if self.match_token(&TokenType::LeftBrace) {
             Ok(Stmt::Block(self.block()?))
         } else {
             self.expression_statement()
         }
+    }
+
+    fn destroy_statement(&mut self) -> Result<Stmt, ParseError> {
+        // Parse object type (ball, square, etc.)
+        let object_type = match &self.peek().token_type {
+            TokenType::Identifier(name) => {
+                let name = name.clone();
+                self.advance();
+                name
+            },
+            _ => return Err(ParseError::Expected {
+                expected: "object type".to_string(),
+                found: self.peek().clone(),
+                message: "Expected object type after 'destroy'".to_string(),
+            }),
+        };
+        
+        // Parse arguments in parentheses
+        self.consume(&TokenType::LeftParen, "Expected '(' after object type")?;
+        let mut arguments = Vec::new();
+        
+        if !self.check(&TokenType::RightParen) {
+            loop {
+                arguments.push(self.expression()?);
+                if !self.match_token(&TokenType::Comma) {
+                    break;
+                }
+            }
+        }
+        
+        self.consume(&TokenType::RightParen, "Expected ')' after arguments")?;
+        self.consume_newline_or_semicolon()?;
+        
+        Ok(Stmt::Destroy {
+            object_type,
+            arguments,
+        })
     }
 
     fn play_statement(&mut self) -> Result<Stmt, ParseError> {
@@ -72,12 +111,17 @@ impl Parser {
     fn set_statement(&mut self) -> Result<Stmt, ParseError> {
         self.consume(&TokenType::Direction, "Expected 'direction' after 'set'")?;
         
-        let object_name = if let TokenType::Identifier(name) = &self.peek().token_type {
-            let name = name.clone();
-            self.advance();
-            name
-        } else {
-            return Err(ParseError::ExpectedIdentifier(self.peek().line, self.peek().column));
+        let object_name = match &self.peek().token_type {
+            TokenType::Identifier(name) => {
+                let name = name.clone();
+                self.advance();
+                name
+            },
+            TokenType::Cursor => {
+                self.advance();
+                "cursor".to_string()
+            },
+            _ => return Err(ParseError::ExpectedIdentifier(self.peek().line, self.peek().column)),
         };
         
         let direction = match &self.peek().token_type {

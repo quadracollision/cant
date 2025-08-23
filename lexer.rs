@@ -21,6 +21,7 @@ pub enum TokenType {
     Pause,      // Add this missing token
     Stop,       // New: for "stop" command
     Clear,      // New: for "clear" command
+    Destroy,    // New: for "destroy" command
     Balls,      // New: for "balls" keyword
     Squares,    // New: for "squares" keyword
     Cursor,     // New: for "cursor" keyword
@@ -292,6 +293,7 @@ impl Lexer {
             "pause" => TokenType::Pause,
             "stop" => TokenType::Stop,
             "clear" => TokenType::Clear,
+            "destroy" => TokenType::Destroy,  // Add this line
             "balls" => TokenType::Balls,
             "squares" => TokenType::Squares,
             "cursor" => TokenType::Cursor,

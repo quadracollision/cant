@@ -268,22 +268,78 @@ impl Interpreter {
             Stmt::SetDirection { object_name, direction } => {
                 self.execute_set_direction(object_name, direction)
             },
-            Stmt::Play => {
-                self.execute_play()
-            },
-            Stmt::Pause => {
-                self.execute_pause()
-            },
-            Stmt::Stop => {
-                self.execute_stop()
-            },
-            Stmt::ClearBalls => {
-                self.execute_clear_balls()
-            },
-            Stmt::ClearSquares => {
-                self.execute_clear_squares()
+            Stmt::Play => self.execute_play(),
+            Stmt::Pause => self.execute_pause(),
+            Stmt::Stop => self.execute_stop(),
+            Stmt::ClearBalls => self.execute_clear_balls(),
+            Stmt::ClearSquares => self.execute_clear_squares(),
+            Stmt::Destroy { object_type, arguments } => {  // Add this
+                self.execute_destroy(object_type, arguments)
             },
         }
+    }
+
+    fn execute_destroy(&mut self, object_type: &str, arguments: &[Expr]) -> Result<Value, InterpreterError> {
+        if arguments.len() != 1 {
+            return Err(InterpreterError::RuntimeError("destroy expects 1 argument".to_string()));
+        }
+        
+        let arg_value = self.evaluate_expression(&arguments[0])?;
+        
+        match arg_value {
+            Value::String(s) if s.starts_with("cursor:") => {
+                // Extract cursor coordinates and find objects at that position
+                let parts: Vec<&str> = s.split(':').collect();
+                if parts.len() == 3 {
+                    let cursor_x = parts[1].parse::<u32>().unwrap_or(0);
+                    let cursor_y = parts[2].parse::<u32>().unwrap_or(0);
+                    
+                    // Find objects at cursor position
+                    let objects_at_cursor = self.game_objects.find_objects_at_grid_with_names(cursor_x, cursor_y);
+                    
+                    if objects_at_cursor.is_empty() {
+                        return Ok(Value::String("No objects found at cursor position".to_string()));
+                    }
+                    
+                    // Filter by object type and destroy the first match
+                    for obj_name in &objects_at_cursor {
+                        if obj_name.starts_with(object_type) {
+                            if let Some(obj_id) = self.game_objects.find_object_by_name(obj_name) {
+                                self.game_objects.destroy_object(obj_id);
+                                return Ok(Value::String(format!("Destroyed {} at cursor position", obj_name)));
+                            }
+                        }
+                    }
+                    
+                    return Ok(Value::String(format!("No {} found at cursor position", object_type)));
+                } else {
+                    return Err(InterpreterError::RuntimeError("Invalid cursor format".to_string()));
+                }
+            },
+            Value::Number(x) if arguments.len() == 2 => {
+                // Handle destroy ball(0, 0) syntax
+                let y_value = self.evaluate_expression(&arguments[1])?;
+                if let Value::Number(y) = y_value {
+                    let objects_at_pos = self.game_objects.find_objects_at_grid_with_names(x as u32, y as u32);
+                    
+                    for obj_name in &objects_at_pos {
+                        if obj_name.starts_with(object_type) {
+                            if let Some(obj_id) = self.game_objects.find_object_by_name(obj_name) {
+                                self.game_objects.destroy_object(obj_id);
+                                return Ok(Value::String(format!("Destroyed {} at ({}, {})", obj_name, x, y)));
+                            }
+                        }
+                    }
+                    
+                    return Ok(Value::String(format!("No {} found at ({}, {})", object_type, x, y)));
+                }
+            },
+            _ => {
+                return Err(InterpreterError::TypeError("destroy expects cursor position or coordinates".to_string()));
+            }
+        }
+        
+        Ok(Value::String("Destroy command completed".to_string()))
     }
 
     fn evaluate_expression(&mut self, expr: &Expr) -> Result<Value, InterpreterError> {
@@ -687,26 +743,44 @@ impl Interpreter {
     }
 
     fn execute_set_direction(&mut self, object_name: &str, direction: &DirectionValue) -> Result<Value, InterpreterError> {
-        // Find the object by name
-        let object_id = self.game_objects.find_object_by_name(object_name)
-            .ok_or_else(|| InterpreterError::RuntimeError(format!("Object '{}' not found", object_name)))?;
+        let object_id = if object_name == "cursor" {
+            // Find object at cursor position
+            let object_names_at_cursor = self.game_objects.find_objects_at_grid_with_names(self.cursor_x, self.cursor_y);
+            if object_names_at_cursor.is_empty() {
+                return Err(InterpreterError::RuntimeError("No object found at cursor position".to_string()));
+            }
+            // Use the first object found at cursor position and get its ID
+            let first_object_name = &object_names_at_cursor[0];
+            self.game_objects.find_object_by_name(first_object_name)
+                .ok_or_else(|| InterpreterError::RuntimeError(format!("Object '{}' not found", first_object_name)))?
+        } else {
+            // Find the object by name
+            self.game_objects.find_object_by_name(object_name)
+                .ok_or_else(|| InterpreterError::RuntimeError(format!("Object '{}' not found", object_name)))?
+        };
         
         // Convert direction to angle
         let angle = match direction {
             DirectionValue::Left => std::f64::consts::PI,
             DirectionValue::Right => 0.0,
-            DirectionValue::Up => 3.0 * std::f64::consts::PI / 2.0,
-            DirectionValue::Down => std::f64::consts::PI / 2.0,
-            DirectionValue::UpLeft => 5.0 * std::f64::consts::PI / 4.0,
-            DirectionValue::UpRight => 7.0 * std::f64::consts::PI / 4.0,
-            DirectionValue::DownLeft => 3.0 * std::f64::consts::PI / 4.0,
-            DirectionValue::DownRight => std::f64::consts::PI / 4.0,
+            DirectionValue::Up => -std::f64::consts::PI / 2.0,  // Changed from 3π/2 to -π/2
+            DirectionValue::Down => std::f64::consts::PI / 2.0,  // This one was correct
+            DirectionValue::UpLeft => -3.0 * std::f64::consts::PI / 4.0,  // Changed from 5π/4 to -3π/4
+            DirectionValue::UpRight => -std::f64::consts::PI / 4.0,  // Changed from 7π/4 to -π/4
+            DirectionValue::DownLeft => 3.0 * std::f64::consts::PI / 4.0,  // This one was correct
+            DirectionValue::DownRight => std::f64::consts::PI / 4.0,  // This one was correct
         };
         
         self.game_objects.set_ball_direction(object_id, angle)
             .map_err(|e| InterpreterError::RuntimeError(e))?;
         
-        Ok(Value::String(format!("Set direction of {} to {:?}", object_name, direction)))
+        let target_name = if object_name == "cursor" {
+            format!("object at cursor position")
+        } else {
+            object_name.to_string()
+        };
+        
+        Ok(Value::String(format!("Set direction of {} to {:?}", target_name, direction)))
     }
 
     fn execute_clear_balls(&mut self) -> Result<Value, InterpreterError> {
