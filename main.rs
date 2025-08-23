@@ -25,8 +25,8 @@ use crate::graphics::GraphicsRenderer;
 use crate::input::{InputHandler, InputAction};
 use crate::console::Console;
 
-const WIDTH: u32 = 800;
-const HEIGHT: u32 = 800;
+const WIDTH: u32 = 600;
+const HEIGHT: u32 = 600;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();

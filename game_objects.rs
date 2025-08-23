@@ -140,13 +140,13 @@ impl GameObjectManager {
             match obj {
                 GameObject::Ball(ball) => {
                     let (obj_x, obj_y) = ball.get_position();
-                    if (obj_x - grid_x as f64).abs() < tolerance && (obj_y - grid_y as f64).abs() < tolerance {
+                    if (obj_x - grid_x as f64).abs() <= tolerance && (obj_y - grid_y as f64).abs() <= tolerance {
                         object_names.push(ball.get_friendly_name());
                     }
                 }
                 GameObject::Square(square) => {
                     let (obj_x, obj_y) = square.get_position();
-                    if (obj_x - grid_x as f64).abs() < tolerance && (obj_y - grid_y as f64).abs() < tolerance {
+                    if (obj_x - grid_x as f64).abs() <= tolerance && (obj_y - grid_y as f64).abs() <= tolerance {
                         object_names.push(square.get_friendly_name());
                     }
                 }
@@ -200,5 +200,29 @@ impl GameObjectManager {
         } else {
             None
         }
+    }
+
+    pub fn clear_all_balls(&mut self) -> usize {
+        let ball_ids: Vec<u32> = self.balls.keys().cloned().collect();
+        let count = ball_ids.len();
+        
+        for ball_id in ball_ids {
+            self.objects.remove(&ball_id);
+            self.balls.remove(&ball_id);
+        }
+        
+        count
+    }
+
+    pub fn clear_all_squares(&mut self) -> usize {
+        let square_ids: Vec<u32> = self.squares.keys().cloned().collect();
+        let count = square_ids.len();
+        
+        for square_id in square_ids {
+            self.objects.remove(&square_id);
+            self.squares.remove(&square_id);
+        }
+        
+        count
     }
 }

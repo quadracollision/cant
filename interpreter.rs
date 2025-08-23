@@ -119,6 +119,21 @@ impl Interpreter {
         Ok(Value::String("Game paused".to_string()))
     }
 
+    fn execute_stop(&mut self) -> Result<Value, InterpreterError> {
+        // Stop the physics simulation
+        self.game_state_manager.stop_play();
+        
+        // Restore the saved state if it exists
+        if let Some(saved) = self.game_state_manager.restore_state() {
+            self.game_objects = saved.game_objects;
+            self.grid_state = saved.grid_state;
+            self.environment = saved.environment;
+            Ok(Value::String("Game stopped and state restored".to_string()))
+        } else {
+            Ok(Value::String("Game stopped (no saved state to restore)".to_string()))
+        }
+    }
+
     pub fn is_playing(&self) -> bool {
         self.game_state_manager.is_playing()
     }
@@ -222,6 +237,15 @@ impl Interpreter {
             },
             Stmt::Pause => {
                 self.execute_pause()
+            },
+            Stmt::Stop => {
+                self.execute_stop()
+            },
+            Stmt::ClearBalls => {
+                self.execute_clear_balls()
+            },
+            Stmt::ClearSquares => {
+                self.execute_clear_squares()
             },
         }
     }
@@ -547,7 +571,11 @@ impl Interpreter {
     }
 
     fn execute_set_direction(&mut self, object_name: &str, direction: &DirectionValue) -> Result<Value, InterpreterError> {
-        // Convert direction to angle in radians
+        // Find the object by name
+        let object_id = self.game_objects.find_object_by_name(object_name)
+            .ok_or_else(|| InterpreterError::RuntimeError(format!("Object '{}' not found", object_name)))?;
+        
+        // Convert direction to angle
         let angle = match direction {
             DirectionValue::Left => std::f64::consts::PI,
             DirectionValue::Right => 0.0,
@@ -559,13 +587,19 @@ impl Interpreter {
             DirectionValue::DownRight => std::f64::consts::PI / 4.0,
         };
         
-        // Find the object by name and get its ID
-        let object_id = self.game_objects.find_object_by_name(object_name)
-            .ok_or_else(|| InterpreterError::RuntimeError(format!("Object '{}' not found", object_name)))?;
-        
         self.game_objects.set_ball_direction(object_id, angle)
             .map_err(|e| InterpreterError::RuntimeError(e))?;
         
         Ok(Value::String(format!("Set direction of {} to {:?}", object_name, direction)))
+    }
+
+    fn execute_clear_balls(&mut self) -> Result<Value, InterpreterError> {
+        let count = self.game_objects.clear_all_balls();
+        Ok(Value::String(format!("Cleared {} ball(s)", count)))
+    }
+
+    fn execute_clear_squares(&mut self) -> Result<Value, InterpreterError> {
+        let count = self.game_objects.clear_all_squares();
+        Ok(Value::String(format!("Cleared {} square(s)", count)))
     }
 }

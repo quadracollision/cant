@@ -18,7 +18,11 @@ pub enum TokenType {
     Set,        // for "set direction" command
     Direction,  // for "direction" keyword
     Play,       // New: for "play" command
-    Pause,  // Add this missing token
+    Pause,      // Add this missing token
+    Stop,       // New: for "stop" command
+    Clear,      // New: for "clear" command
+    Balls,      // New: for "balls" keyword
+    Squares,    // New: for "squares" keyword
     
     // Direction keywords
     Left,
@@ -285,6 +289,10 @@ impl Lexer {
             "direction" => TokenType::Direction,
             "play" => TokenType::Play,
             "pause" => TokenType::Pause,
+            "stop" => TokenType::Stop,
+            "clear" => TokenType::Clear,
+            "balls" => TokenType::Balls,
+            "squares" => TokenType::Squares,
             "left" => TokenType::Left,
             "right" => TokenType::Right,
             "up" => TokenType::Up,

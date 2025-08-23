@@ -48,6 +48,10 @@ impl Parser {
             self.play_statement()
         } else if self.match_token(&TokenType::Pause) {
             self.pause_statement()
+        } else if self.match_token(&TokenType::Stop) {
+            self.stop_statement()
+        } else if self.match_token(&TokenType::Clear) {
+            self.clear_statement()
         } else if self.match_token(&TokenType::LeftBrace) {
             Ok(Stmt::Block(self.block()?))
         } else {
@@ -493,6 +497,27 @@ impl Parser {
                 expected: "newline or semicolon".to_string(),
                 found: self.peek().clone(),
                 message: "Expected end of statement".to_string(),
+            })
+        }
+    }
+
+    fn stop_statement(&mut self) -> Result<Stmt, ParseError> {
+        self.consume_newline_or_semicolon()?;
+        Ok(Stmt::Stop)
+    }
+
+    fn clear_statement(&mut self) -> Result<Stmt, ParseError> {
+        if self.match_token(&TokenType::Balls) {
+            self.consume_newline_or_semicolon()?;
+            Ok(Stmt::ClearBalls)
+        } else if self.match_token(&TokenType::Squares) {
+            self.consume_newline_or_semicolon()?;
+            Ok(Stmt::ClearSquares)
+        } else {
+            Err(ParseError::Expected {
+                expected: "'balls' or 'squares'".to_string(),
+                found: self.peek().clone(),
+                message: "Expected 'balls' or 'squares' after 'clear'".to_string(),
             })
         }
     }

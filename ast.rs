@@ -76,8 +76,11 @@ pub enum Stmt {
         object_name: String,
         direction: DirectionValue,
     },
-    Play,  // New: simple play command
+    Play,   // New: simple play command
     Pause,  // New: pause command
+    Stop,   // New: stop command to restore pre-play state
+    ClearBalls,   // New: clear all balls command
+    ClearSquares, // New: clear all squares command
 }
 
 #[derive(Debug, Clone)]
