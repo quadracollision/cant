@@ -18,6 +18,7 @@ pub struct Ball {
     pub script: Option<String>, // script to execute on collision
 }
 
+// Add to existing Ball implementation
 impl Ball {
     pub fn new(x: f64, y: f64, speed: f64, direction: f64) -> Self {
         let id = NEXT_BALL_ID.fetch_add(1, Ordering::SeqCst);
@@ -58,5 +59,30 @@ impl Ball {
         self.velocity_y = vy;
         self.speed = (vx * vx + vy * vy).sqrt();
         self.direction = vy.atan2(vx);
+    }
+    
+    pub fn set_direction(&mut self, direction_radians: f64) {
+        self.direction = direction_radians;
+        self.velocity_x = self.speed * direction_radians.cos();
+        self.velocity_y = self.speed * direction_radians.sin();
+    }
+    
+    pub fn set_direction_from_string(direction: &str) -> f64 {
+        use std::f64::consts::PI;
+        match direction {
+            "right" => 0.0,
+            "up-right" | "right-up" => -PI / 4.0,
+            "up" => -PI / 2.0,
+            "up-left" | "left-up" => -3.0 * PI / 4.0,
+            "left" => PI,
+            "down-left" | "left-down" => 3.0 * PI / 4.0,
+            "down" => PI / 2.0,
+            "down-right" | "right-down" => PI / 4.0,
+            _ => 0.0, // default to right
+        }
+    }
+    
+    pub fn update_direction_from_velocity(&mut self) {
+        self.direction = self.velocity_y.atan2(self.velocity_x);
     }
 }

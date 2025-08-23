@@ -24,6 +24,7 @@ impl GameObject {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct GameObjectManager {
     objects: HashMap<u32, GameObject>,
     balls: HashMap<u32, u32>, // ball_id -> object_id mapping
@@ -153,5 +154,51 @@ impl GameObjectManager {
         }
         
         object_names
+    }
+    
+    pub fn find_object_by_name(&self, name: &str) -> Option<u32> {
+        for (id, obj) in &self.objects {
+            match obj {
+                GameObject::Ball(ball) => {
+                    if ball.get_friendly_name() == name {
+                        return Some(*id);
+                    }
+                },
+                GameObject::Square(_) => {
+                    // Could add square naming later
+                }
+            }
+        }
+        None
+    }
+    
+    pub fn set_ball_direction(&mut self, object_id: u32, direction_radians: f64) -> Result<(), String> {
+        if let Some(GameObject::Ball(ball)) = self.objects.get_mut(&object_id) {
+            ball.set_direction(direction_radians);
+            Ok(())
+        } else {
+            Err("Object is not a ball or does not exist".to_string())
+        }
+    }
+    
+    pub fn get_all_squares(&self) -> Vec<Square> {
+        self.objects.values()
+            .filter_map(|obj| match obj {
+                GameObject::Square(square) => Some(square.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+    
+    pub fn get_all_ball_ids(&self) -> Vec<u32> {
+        self.balls.keys().cloned().collect()
+    }
+    
+    pub fn get_ball_mut(&mut self, ball_id: u32) -> Option<&mut Ball> {
+        if let Some(GameObject::Ball(ball)) = self.objects.get_mut(&ball_id) {
+            Some(ball)
+        } else {
+            None
+        }
     }
 }

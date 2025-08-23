@@ -10,6 +10,8 @@ mod font;
 mod game_objects;
 mod ball;
 mod square;
+mod physics_engine;
+mod game_state;
 
 use winit::{
     event::{Event, WindowEvent, KeyboardInput},
@@ -38,6 +40,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut graphics = GraphicsRenderer::new(&window, WIDTH, HEIGHT)?;
     let mut interpreter = Interpreter::new();
+    
+    // No initial grid setup - wait for user to call grid(x, y)
+    
     let mut input_handler = InputHandler::new();
     let mut console = Console::new(50);
     
@@ -157,6 +162,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             Event::MainEventsCleared => {
+                // Calculate delta time and update physics
+                let now = Instant::now();
+                let dt = now.duration_since(last_update).as_secs_f64();
+                last_update = now;
+                
+                // Update physics if game is playing
+                interpreter.update_physics(dt);
+                
+                // Always request redraw when playing to show ball movement
+                if interpreter.is_playing() {
+                    redraw_requested = true;
+                }
+                
                 if redraw_requested {
                     let console_lines = console.get_display_lines(10);
                     graphics.render(interpreter.get_grid_state(), &console_lines, Some(interpreter.get_game_objects()));

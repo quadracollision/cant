@@ -5,6 +5,8 @@ use crate::lexer::{Lexer, LexerError};
 use crate::parser::{Parser, ParseError};
 use crate::ast::*;
 use crate::game_objects::{GameObjectManager, GameObject};
+use crate::physics_engine::PhysicsEngine;
+use crate::game_state::GameStateManager;
 
 #[derive(Error, Debug)]
 pub enum InterpreterError {
@@ -70,7 +72,9 @@ pub struct Interpreter {
     grid_state: Option<GridState>,
     globals: HashMap<String, Value>,
     environment: HashMap<String, Value>,
-    game_objects: GameObjectManager, // New field
+    game_objects: GameObjectManager,
+    game_state_manager: GameStateManager,
+    physics_engine: PhysicsEngine,
 }
 
 impl Interpreter {
@@ -80,9 +84,55 @@ impl Interpreter {
             globals: HashMap::new(),
             environment: HashMap::new(),
             game_objects: GameObjectManager::new(),
+            game_state_manager: GameStateManager::new(),
+            physics_engine: PhysicsEngine::new(1.0, 1.0, 1.0), // Minimal placeholder values
         };
         interpreter.register_builtins();
         interpreter
+    }
+
+    fn execute_play(&mut self) -> Result<Value, InterpreterError> {
+        if !self.game_state_manager.is_playing() {
+            // First time playing - save current state
+            if self.game_state_manager.saved_state.is_none() {
+                self.game_state_manager.save_state(
+                    &self.game_objects,
+                    &self.grid_state,
+                    &self.environment
+                );
+            } else {
+                // Restore to saved state
+                if let Some(saved) = self.game_state_manager.restore_state() {
+                    self.game_objects = saved.game_objects.clone();
+                    self.grid_state = saved.grid_state.clone();
+                    self.environment = saved.environment.clone();
+                }
+            }
+        }
+        
+        self.game_state_manager.start_play();
+        Ok(Value::String("Game started".to_string()))
+    }
+
+    fn execute_pause(&mut self) -> Result<Value, InterpreterError> {
+        self.game_state_manager.pause_play();
+        Ok(Value::String("Game paused".to_string()))
+    }
+
+    pub fn is_playing(&self) -> bool {
+        self.game_state_manager.is_playing()
+    }
+
+    pub fn update_physics(&mut self, dt: f64) {
+        if self.is_playing() {
+            let squares = self.game_objects.get_all_squares();
+            
+            for ball_id in self.game_objects.get_all_ball_ids() {
+                if let Some(ball) = self.game_objects.get_ball_mut(ball_id) {
+                    self.physics_engine.update_ball(ball, dt, &squares);
+                }
+            }
+        }
     }
 
     fn register_builtins(&mut self) {
@@ -120,13 +170,13 @@ impl Interpreter {
                 } else {
                     Value::Nil
                 };
-                self.environment.insert(name.clone(), value);
-                Ok(Value::Nil)
+                self.environment.insert(name.clone(), value.clone());
+                Ok(value)
             },
             Stmt::Block(statements) => {
                 let mut result = Value::Nil;
-                for stmt in statements {
-                    result = self.execute_statement(stmt)?;
+                for statement in statements {
+                    result = self.execute_statement(statement)?;
                 }
                 Ok(result)
             },
@@ -153,8 +203,8 @@ impl Interpreter {
                     parameters: parameters.clone(),
                     body: body.clone(),
                 };
-                self.environment.insert(name.clone(), function);
-                Ok(Value::Nil)
+                self.environment.insert(name.clone(), function.clone());
+                Ok(function)
             },
             Stmt::Return(expr) => {
                 let value = if let Some(e) = expr {
@@ -163,6 +213,15 @@ impl Interpreter {
                     Value::Nil
                 };
                 Err(InterpreterError::Return(value))
+            },
+            Stmt::SetDirection { object_name, direction } => {
+                self.execute_set_direction(object_name, direction)
+            },
+            Stmt::Play => {
+                self.execute_play()
+            },
+            Stmt::Pause => {
+                self.execute_pause()
             },
         }
     }
@@ -199,29 +258,27 @@ impl Interpreter {
             Expr::CreateCall { object_type, arguments } => {
                 match object_type.as_str() {
                     "ball" => {
-                        // Default values for optional arguments
-                        let x = if arguments.len() > 0 {
-                            self.evaluate_expression(&arguments[0])?.as_number()
-                                .ok_or_else(|| InterpreterError::TypeError("x must be a number".to_string()))?
-                        } else { 0.0 };
-                        
-                        let y = if arguments.len() > 1 {
-                            self.evaluate_expression(&arguments[1])?.as_number()
-                                .ok_or_else(|| InterpreterError::TypeError("y must be a number".to_string()))?
-                        } else { 0.0 };
-                        
-                        let speed = if arguments.len() > 2 {
-                            self.evaluate_expression(&arguments[2])?.as_number()
-                                .ok_or_else(|| InterpreterError::TypeError("speed must be a number".to_string()))?
-                        } else { 1.0 }; // default speed
-                        
-                        let direction = if arguments.len() > 3 {
-                            self.evaluate_expression(&arguments[3])?.as_number()
-                                .ok_or_else(|| InterpreterError::TypeError("direction must be a number".to_string()))?
-                        } else { 0.0 }; // default direction
-                        
-                        let id = self.game_objects.create_ball(x, y, speed, direction);
-                        Ok(Value::GameObject(id))
+                        // Require a grid to exist before creating a ball
+                        if let Some(ref grid) = self.grid_state {
+                            let (start_x, start_y) = if arguments.len() >= 2 {
+                                // Use provided x,y coordinates as grid cell indices
+                                let x = self.evaluate_expression(&arguments[0])?.as_number()
+                                    .ok_or_else(|| InterpreterError::TypeError("Ball x coordinate must be a number".to_string()))?;
+                                let y = self.evaluate_expression(&arguments[1])?.as_number()
+                                    .ok_or_else(|| InterpreterError::TypeError("Ball y coordinate must be a number".to_string()))?;
+                                // Add 0.5 to center the ball in the grid cell
+                                (x + 0.5, y + 0.5)
+                            } else {
+                                // Default to center of grid
+                                ((grid.width as f64 / 2.0), (grid.height as f64 / 2.0))
+                            };
+                            let id = self.game_objects.create_ball(start_x, start_y, 5.0, 0.0);
+                            return Ok(Value::GameObject(id));
+                        } else {
+                            return Err(InterpreterError::RuntimeError(
+                                "Cannot create ball: No grid exists. Create a grid first with grid(x, y)".to_string()
+                            ));
+                        }
                     },
                     "square" => {
                         let x = if arguments.len() > 0 {
@@ -327,9 +384,32 @@ impl Interpreter {
                 return Ok(Value::String("Grid cleared".to_string()));
             },
             "help" => return Ok(Value::String(self.show_help())),
-            // New game object functions
-            "create" => return self.call_create_function(arguments),
-            "destroy" => return self.call_destroy_function(arguments),
+            // In the "create" function around line 398-408
+            "ball" => {
+                // Create ball at center of current grid if grid exists
+                let (start_x, start_y) = if let Some(ref grid) = self.grid_state {
+                    // Center the ball in the middle cell by adding 0.5 to place it in cell center
+                    ((grid.width as f64 / 2.0) - 0.5, (grid.height as f64 / 2.0) - 0.5)
+                } else {
+                    // Use physics engine boundaries as fallback
+                    ((self.physics_engine.grid_width / 2.0) - 0.5, (self.physics_engine.grid_height / 2.0) - 0.5)
+                };
+                let id = self.game_objects.create_ball(start_x, start_y, 5.0, 0.0);
+                return Ok(Value::GameObject(id));
+            },
+            "destroy" => {
+                // Handle destroy function inline
+                if arguments.len() != 1 {
+                    return Err(InterpreterError::RuntimeError("destroy expects 1 argument".to_string()));
+                }
+                let obj_id = self.evaluate_expression(&arguments[0])?;
+                if let Value::GameObject(id) = obj_id {
+                    self.game_objects.destroy_object(id);
+                    return Ok(Value::String("Object destroyed".to_string()));
+                } else {
+                    return Err(InterpreterError::TypeError("destroy expects a game object".to_string()));
+                }
+            },
             _ => {}
         }
 
@@ -414,6 +494,8 @@ impl Interpreter {
         };
 
         self.grid_state = Some(GridState::new(x, y));
+        // ADD THIS LINE: Update physics engine boundaries to match the new grid
+        self.physics_engine.update_grid_size(x as f64, y as f64);
         Ok(Value::String(format!("Created {}x{} grid", x, y)))
     }
 
@@ -464,85 +546,26 @@ impl Interpreter {
         &self.game_objects
     }
 
-    pub fn update_physics(&mut self, dt: f64) {
-        self.game_objects.update_ball_physics(dt);
-    }
-
-    pub fn process_collisions(&mut self) -> Result<(), InterpreterError> {
-        let collisions = self.game_objects.check_collisions();
-        
-        for (id1, id2) in collisions {
-            // Execute collision scripts if they exist
-            // This would be implemented based on the script system requirements
-            println!("Collision detected between objects {} and {}", id1, id2);
-        }
-        
-        Ok(())
-    }
-    
-    fn call_create_function(&mut self, arguments: &[Expr]) -> Result<Value, InterpreterError> {
-        if arguments.len() < 1 {
-            return Err(InterpreterError::RuntimeError("create requires at least 1 argument".to_string()));
-        }
-        
-        let object_type = self.evaluate_expression(&arguments[0])?;
-        let type_str = match object_type {
-            Value::String(s) => s,
-            _ => return Err(InterpreterError::TypeError("First argument must be object type string".to_string())),
+    fn execute_set_direction(&mut self, object_name: &str, direction: &DirectionValue) -> Result<Value, InterpreterError> {
+        // Convert direction to angle in radians
+        let angle = match direction {
+            DirectionValue::Left => std::f64::consts::PI,
+            DirectionValue::Right => 0.0,
+            DirectionValue::Up => 3.0 * std::f64::consts::PI / 2.0,
+            DirectionValue::Down => std::f64::consts::PI / 2.0,
+            DirectionValue::UpLeft => 5.0 * std::f64::consts::PI / 4.0,
+            DirectionValue::UpRight => 7.0 * std::f64::consts::PI / 4.0,
+            DirectionValue::DownLeft => 3.0 * std::f64::consts::PI / 4.0,
+            DirectionValue::DownRight => std::f64::consts::PI / 4.0,
         };
         
-        match type_str.as_str() {
-            "ball" => {
-                if arguments.len() != 5 {
-                    return Err(InterpreterError::RuntimeError("create ball requires 5 arguments: type, x, y, speed, direction".to_string()));
-                }
-                
-                let x = self.evaluate_expression(&arguments[1])?.as_number()
-                    .ok_or_else(|| InterpreterError::TypeError("x must be a number".to_string()))?;
-                let y = self.evaluate_expression(&arguments[2])?.as_number()
-                    .ok_or_else(|| InterpreterError::TypeError("y must be a number".to_string()))?;
-                let speed = self.evaluate_expression(&arguments[3])?.as_number()
-                    .ok_or_else(|| InterpreterError::TypeError("speed must be a number".to_string()))?;
-                let direction = self.evaluate_expression(&arguments[4])?.as_number()
-                    .ok_or_else(|| InterpreterError::TypeError("direction must be a number".to_string()))?;
-                
-                let id = self.game_objects.create_ball(x, y, speed, direction);
-                Ok(Value::GameObject(id))
-            },
-            "square" => {
-                if arguments.len() != 3 {
-                    return Err(InterpreterError::RuntimeError("create square requires 3 arguments: type, x, y".to_string()));
-                }
-                
-                let x = self.evaluate_expression(&arguments[1])?.as_number()
-                    .ok_or_else(|| InterpreterError::TypeError("x must be a number".to_string()))?;
-                let y = self.evaluate_expression(&arguments[2])?.as_number()
-                    .ok_or_else(|| InterpreterError::TypeError("y must be a number".to_string()))?;
-                
-                let id = self.game_objects.create_square(x, y);
-                Ok(Value::GameObject(id))
-            },
-            _ => Err(InterpreterError::RuntimeError(format!("Unknown object type: {}", type_str)))
-        }
-    }
-    
-    fn call_destroy_function(&mut self, arguments: &[Expr]) -> Result<Value, InterpreterError> {
-        if arguments.len() != 1 {
-            return Err(InterpreterError::RuntimeError("destroy requires exactly 1 argument".to_string()));
-        }
+        // Find the object by name and get its ID
+        let object_id = self.game_objects.find_object_by_name(object_name)
+            .ok_or_else(|| InterpreterError::RuntimeError(format!("Object '{}' not found", object_name)))?;
         
-        let target = self.evaluate_expression(&arguments[0])?;
-        let id = match target {
-            Value::GameObject(id) => id,
-            Value::Number(n) => n as u32,
-            _ => return Err(InterpreterError::TypeError("destroy argument must be a game object or number".to_string())),
-        };
+        self.game_objects.set_ball_direction(object_id, angle)
+            .map_err(|e| InterpreterError::RuntimeError(e))?;
         
-        let success = self.game_objects.destroy_object(id);
-        if success {
-            Ok(Value::String(format!("Object {} destroyed", id)))
-        } else {
-            Err(InterpreterError::RuntimeError(format!("Object {} not found", id)))
-        }
+        Ok(Value::String(format!("Set direction of {} to {:?}", object_name, direction)))
     }
 }

@@ -72,6 +72,24 @@ pub enum Stmt {
         body: Box<Stmt>,
     },
     Return(Option<Expr>),
+    SetDirection {
+        object_name: String,
+        direction: DirectionValue,
+    },
+    Play,  // New: simple play command
+    Pause,  // New: pause command
+}
+
+#[derive(Debug, Clone)]
+pub enum DirectionValue {
+    Left,
+    Right,
+    Up,
+    Down,
+    UpLeft,
+    UpRight,
+    DownLeft,
+    DownRight,
 }
 
 #[derive(Debug, Clone)]

@@ -42,11 +42,54 @@ impl Parser {
             self.function_statement()
         } else if self.match_token(&TokenType::Return) {
             self.return_statement()
+        } else if self.match_token(&TokenType::Set) {
+            self.set_statement()
+        } else if self.match_token(&TokenType::Play) {
+            self.play_statement()
+        } else if self.match_token(&TokenType::Pause) {
+            self.pause_statement()
         } else if self.match_token(&TokenType::LeftBrace) {
             Ok(Stmt::Block(self.block()?))
         } else {
             self.expression_statement()
         }
+    }
+
+    fn play_statement(&mut self) -> Result<Stmt, ParseError> {
+        self.consume_newline_or_semicolon()?;
+        Ok(Stmt::Play)
+    }
+
+    fn pause_statement(&mut self) -> Result<Stmt, ParseError> {
+        self.consume_newline_or_semicolon()?;
+        Ok(Stmt::Pause)
+    }
+
+    fn set_statement(&mut self) -> Result<Stmt, ParseError> {
+        self.consume(&TokenType::Direction, "Expected 'direction' after 'set'")?;
+        
+        let object_name = if let TokenType::Identifier(name) = &self.peek().token_type {
+            let name = name.clone();
+            self.advance();
+            name
+        } else {
+            return Err(ParseError::ExpectedIdentifier(self.peek().line, self.peek().column));
+        };
+        
+        let direction = match &self.peek().token_type {
+            TokenType::Left => { self.advance(); DirectionValue::Left },
+            TokenType::Right => { self.advance(); DirectionValue::Right },
+            TokenType::Up => { self.advance(); DirectionValue::Up },
+            TokenType::Down => { self.advance(); DirectionValue::Down },
+            TokenType::UpLeft => { self.advance(); DirectionValue::UpLeft },
+            TokenType::UpRight => { self.advance(); DirectionValue::UpRight },
+            TokenType::DownLeft => { self.advance(); DirectionValue::DownLeft },
+            TokenType::DownRight => { self.advance(); DirectionValue::DownRight },
+            _ => return Err(ParseError::UnexpectedToken(self.peek().clone())),
+        };
+        
+        self.consume_newline_or_semicolon()?;
+        Ok(Stmt::SetDirection { object_name, direction })
     }
 
     fn let_statement(&mut self) -> Result<Stmt, ParseError> {

@@ -102,6 +102,7 @@ impl GraphicsRenderer {
         let available_width = width.saturating_sub(GRID_PADDING * 2);
         let available_height = height.saturating_sub(CONSOLE_HEIGHT + GRID_PADDING * 2);
         
+        // Use the EXACT same logic as render_grid_static - no fallback values!
         let max_tile_width = if grid_width > 0 { available_width / grid_width } else { tile_size };
         let max_tile_height = if grid_height > 0 { available_height / grid_height } else { tile_size };
         let dynamic_tile_size = max_tile_width.min(max_tile_height).max(1);
@@ -116,9 +117,11 @@ impl GraphicsRenderer {
         for obj in objects.get_all_objects().values() {
             match obj {
                 GameObject::Ball(ball) => {
-                    // Center the ball within its grid cell
-                    let screen_x = start_x + (ball.x * dynamic_tile_size as f64) as u32 + dynamic_tile_size / 2;
-                    let screen_y = start_y + (ball.y * dynamic_tile_size as f64) as u32 + dynamic_tile_size / 2;
+                    // Ball coordinates are already centered in grid cells (e.g., 0.5, 0.5 for cell 0,0)
+                    // Convert directly to screen coordinates
+                    let screen_x = start_x + (ball.x * dynamic_tile_size as f64) as u32;
+                    let screen_y = start_y + (ball.y * dynamic_tile_size as f64) as u32;
+                    
                     let radius = (dynamic_tile_size as f64 * 0.4) as u32;
                     Self::draw_circle_static(frame, screen_x, screen_y, radius, [255, 100, 100, 255], width, height);
                 },

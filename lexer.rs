@@ -15,6 +15,20 @@ pub enum TokenType {
     For,
     Function,
     Return,
+    Set,        // for "set direction" command
+    Direction,  // for "direction" keyword
+    Play,       // New: for "play" command
+    Pause,  // Add this missing token
+    
+    // Direction keywords
+    Left,
+    Right,
+    Up,
+    Down,
+    UpLeft,
+    UpRight,
+    DownLeft,
+    DownRight,
     
     // Operators
     Plus,
@@ -267,6 +281,18 @@ impl Lexer {
             "for" => TokenType::For,
             "function" => TokenType::Function,
             "return" => TokenType::Return,
+            "set" => TokenType::Set,
+            "direction" => TokenType::Direction,
+            "play" => TokenType::Play,
+            "pause" => TokenType::Pause,
+            "left" => TokenType::Left,
+            "right" => TokenType::Right,
+            "up" => TokenType::Up,
+            "down" => TokenType::Down,
+            "up-left" | "left-up" => TokenType::UpLeft,
+            "up-right" | "right-up" => TokenType::UpRight,
+            "down-left" | "left-down" => TokenType::DownLeft,
+            "down-right" | "right-down" => TokenType::DownRight,
             _ => TokenType::Identifier(text),
         }
     }
