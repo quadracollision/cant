@@ -5,7 +5,7 @@ use crate::font;
 use crate::game_objects::{GameObjectManager, GameObject};
 
 pub const GRID_PADDING: u32 = 10;
-pub const CONSOLE_HEIGHT: u32 = 200;
+pub const CONSOLE_HEIGHT: u32 = 120;  // Reduced from 200 to 120
 
 pub struct GraphicsRenderer {
     pixels: Pixels,
@@ -406,9 +406,21 @@ impl GraphicsRenderer {
         let text_color = [200, 200, 200]; // Light gray text
         let line_height = 14; // 12px font + 2px spacing
         let start_x = 10;
+        let padding = 10;
         
-        for (i, line) in lines.iter().enumerate() {
-            let text_y = console_start_y as usize + 10 + (i * line_height);
+        // Calculate available lines in console area
+        let available_height = CONSOLE_HEIGHT - (padding * 2);
+        let max_lines = (available_height / line_height as u32) as usize;
+        
+        // Ensure we don't exceed available space
+        let display_lines = if lines.len() > max_lines {
+            &lines[lines.len() - max_lines..]
+        } else {
+            lines
+        };
+        
+        for (i, line) in display_lines.iter().enumerate() {
+            let text_y = console_start_y as usize + padding as usize + (i * line_height);
             if text_y + 12 < height as usize {
                 font::draw_text(frame, line, start_x, text_y, text_color, false, width as usize);
             }

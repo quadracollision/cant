@@ -119,19 +119,24 @@ impl Console {
     }
 
     pub fn get_display_lines(&self, max_display_lines: usize) -> Vec<String> {
-        let mut all_lines = self.get_lines();
+        let all_lines = self.get_lines();
         
-        // Add the current command prompt with typed text
-        let current_prompt = format!("{}{}", self.prompt, self.current_command);
-        all_lines.push(current_prompt);
+        // Reserve one line for the prompt, so history gets max_display_lines - 1
+        let max_history_lines = max_display_lines.saturating_sub(1);
         
-        let start_index = if all_lines.len() > max_display_lines {
-            all_lines.len() - max_display_lines
+        let start_index = if all_lines.len() > max_history_lines {
+            all_lines.len() - max_history_lines
         } else {
             0
         };
         
-        all_lines[start_index..].to_vec()
+        let mut display_lines = all_lines[start_index..].to_vec();
+        
+        // Always add the current command prompt as the last line
+        let current_prompt = format!("{}{}", self.prompt, self.current_command);
+        display_lines.push(current_prompt);
+        
+        display_lines
     }
 
     pub fn clear(&mut self) {

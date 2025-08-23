@@ -227,4 +227,42 @@ impl GameObjectManager {
         
         count
     }
+    
+    pub fn find_ball_at_position(&self, x: u32, y: u32) -> Option<u32> {
+        for (id, obj) in &self.objects {
+            if let GameObject::Ball(ball) = obj {
+                let ball_x = ball.x.round() as u32;
+                let ball_y = ball.y.round() as u32;
+                if ball_x == x && ball_y == y {
+                    return Some(*id);
+                }
+            }
+        }
+        None
+    }
+    
+    pub fn is_ball(&self, id: u32) -> bool {
+        if let Some(GameObject::Ball(_)) = self.objects.get(&id) {
+            true
+        } else {
+            false
+        }
+    }
+    
+    pub fn load_audio_into_ball(&mut self, ball_id: u32, file_path: &str) -> Result<(), crate::audio_engine::AudioError> {
+        if let Some(GameObject::Ball(ball)) = self.objects.get_mut(&ball_id) {
+            ball.load_audio_file(file_path)?;
+            Ok(())
+        } else {
+            Err(crate::audio_engine::AudioError::LoadError("Ball not found".to_string()))
+        }
+    }
+    
+    pub fn get_ball_name(&self, ball_id: u32) -> Option<String> {
+        if let Some(GameObject::Ball(ball)) = self.objects.get(&ball_id) {
+            Some(ball.get_friendly_name())
+        } else {
+            None
+        }
+    }
 }

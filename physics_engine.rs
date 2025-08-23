@@ -25,30 +25,41 @@ impl PhysicsEngine {
         ball.y += ball.velocity_y * dt;
 
         // Check grid boundary collisions
-        self.check_boundary_collision(ball);
+        if self.check_boundary_collision(ball) {
+            ball.play_collision_audio(); // Play audio on boundary collision
+        }
         
         // Check square collisions
-        self.check_square_collisions(ball, squares);
+        if self.check_square_collisions(ball, squares) {
+            ball.play_collision_audio(); // Play audio on square collision
+        }
     }
 
-    fn check_boundary_collision(&self, ball: &mut Ball) {
+    fn check_boundary_collision(&self, ball: &mut Ball) -> bool {
         let ball_radius = 0.4; // Ball radius in grid units
+        let mut collision_occurred = false;
         
         // Grid boundaries: 0 to grid_width (actual grid cell edges)
         if ball.x - ball_radius <= 0.0 || ball.x + ball_radius >= self.grid_width {
             ball.velocity_x = -ball.velocity_x;
             ball.x = ball.x.clamp(ball_radius, self.grid_width - ball_radius);
+            collision_occurred = true;
         }
         
         if ball.y - ball_radius <= 0.0 || ball.y + ball_radius >= self.grid_height {
             ball.velocity_y = -ball.velocity_y;
             ball.y = ball.y.clamp(ball_radius, self.grid_height - ball_radius);
+            collision_occurred = true;
         }
         
-        ball.update_direction_from_velocity();
+        if collision_occurred {
+            ball.update_direction_from_velocity();
+        }
+        
+        collision_occurred
     }
 
-    fn check_square_collisions(&self, ball: &mut Ball, squares: &[Square]) {
+    fn check_square_collisions(&self, ball: &mut Ball, squares: &[Square]) -> bool {
         let ball_radius = 0.4; // Grid units
         
         for square in squares {
@@ -57,9 +68,10 @@ impl PhysicsEngine {
                 ball.velocity_x = -ball.velocity_x;
                 ball.velocity_y = -ball.velocity_y;
                 ball.update_direction_from_velocity();
-                break; // Handle one collision per frame
+                return true; // Handle one collision per frame
             }
         }
+        false
     }
 
     fn ball_square_collision(&self, ball: &Ball, square: &Square, ball_radius: f64) -> bool {

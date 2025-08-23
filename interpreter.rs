@@ -102,29 +102,12 @@ impl Interpreter {
             self.game_state_manager.start_play();
             Ok(Value::String("Game resumed".to_string()))
         } else if !self.game_state_manager.is_playing() {
-            // Starting fresh or from stopped state
-            if !self.game_state_manager.has_saved_state() {
-                // First time playing - save original state
-                self.game_state_manager.save_original_state(
-                    &self.game_objects,
-                    &self.grid_state,
-                    &self.environment
-                );
-            } else {
-                // Coming from stopped state - restore to original
-                if let Some(saved) = self.game_state_manager.restore_original_state() {
-                    self.game_objects = saved.game_objects;
-                    self.grid_state = saved.grid_state;
-                    self.environment = saved.environment;
-                    
-                    // Re-save the original state since we took it
-                    self.game_state_manager.save_original_state(
-                        &self.game_objects,
-                        &self.grid_state,
-                        &self.environment
-                    );
-                }
-            }
+            // Starting fresh or from stopped state - always save current state as original
+            self.game_state_manager.save_original_state(
+                &self.game_objects,
+                &self.grid_state,
+                &self.environment
+            );
             
             self.game_state_manager.start_play();
             Ok(Value::String("Game started".to_string()))
@@ -380,44 +363,54 @@ impl Interpreter {
             Expr::CreateCall { object_type, arguments } => {
                 match object_type.as_str() {
                     "ball" => {
-                        if let Some(ref grid) = self.grid_state {
-                            let (start_x, start_y) = if arguments.len() >= 1 {
-                                let first_arg = self.evaluate_expression(&arguments[0])?;
-                                
-                                // Check if first argument is cursor
-                                if let Value::String(s) = &first_arg {
-                                    if s.starts_with("cursor:") {
-                                        // Extract cursor coordinates
-                                        let parts: Vec<&str> = s.split(':').collect();
-                                        if parts.len() == 3 {
-                                            let cursor_x = parts[1].parse::<f64>().unwrap_or(0.0);
-                                            let cursor_y = parts[2].parse::<f64>().unwrap_or(0.0);
-                                            (cursor_x + 0.5, cursor_y + 0.5)
-                                        } else {
-                                            return Err(InterpreterError::RuntimeError("Invalid cursor format".to_string()));
-                                        }
+                        let (start_x, start_y) = if arguments.len() >= 1 {
+                            let first_arg = self.evaluate_expression(&arguments[0])?;
+                            
+                            // Check if first argument is cursor
+                            if let Value::String(s) = &first_arg {
+                                if s.starts_with("cursor:") {
+                                    // Extract cursor coordinates
+                                    let parts: Vec<&str> = s.split(':').collect();
+                                    if parts.len() == 3 {
+                                        let cursor_x = parts[1].parse::<f64>().unwrap_or(0.0);
+                                        let cursor_y = parts[2].parse::<f64>().unwrap_or(0.0);
+                                        // Place ball at center of the grid cell (add 0.5 for cell center)
+                                        (cursor_x + 0.5, cursor_y + 0.5)
                                     } else {
-                                        return Err(InterpreterError::TypeError("Expected cursor or coordinates".to_string()));
+                                        return Err(InterpreterError::RuntimeError("Invalid cursor format".to_string()));
                                     }
-                                } else if arguments.len() >= 2 {
-                                    // Use provided x,y coordinates
-                                    let x = first_arg.as_number()
-                                        .ok_or_else(|| InterpreterError::TypeError("Ball x coordinate must be a number".to_string()))?;
-                                    let y = self.evaluate_expression(&arguments[1])?.as_number()
-                                        .ok_or_else(|| InterpreterError::TypeError("Ball y coordinate must be a number".to_string()))?;
-                                    (x + 0.5, y + 0.5)
                                 } else {
-                                    return Err(InterpreterError::RuntimeError("create ball requires cursor or x,y coordinates".to_string()));
+                                    return Err(InterpreterError::TypeError("Expected cursor or coordinates".to_string()));
                                 }
+                            } else if arguments.len() >= 2 {
+                                // Use provided x,y coordinates
+                                let x = first_arg.as_number()
+                                    .ok_or_else(|| InterpreterError::TypeError("Ball x coordinate must be a number".to_string()))?;
+                                let y = self.evaluate_expression(&arguments[1])?.as_number()
+                                    .ok_or_else(|| InterpreterError::TypeError("Ball y coordinate must be a number".to_string()))?;
+                                (x + 0.5, y + 0.5)
                             } else {
-                                // Default to center
-                                ((grid.width as f64 / 2.0) - 0.5, (grid.height as f64 / 2.0) - 0.5)
-                            };
-                            let id = self.game_objects.create_ball(start_x, start_y, 5.0, 0.0);
-                            Ok(Value::GameObject(id))
+                                return Err(InterpreterError::RuntimeError("Ball creation with single non-cursor argument not supported".to_string()));
+                            }
                         } else {
-                            Err(InterpreterError::RuntimeError("No grid available for ball creation".to_string()))
+                            // Create ball at center of current grid if grid exists (no arguments)
+                            if let Some(ref grid) = self.grid_state {
+                                // Center the ball in the middle cell by adding 0.5 to place it in cell center
+                                ((grid.width as f64 / 2.0) - 0.5, (grid.height as f64 / 2.0) - 0.5)
+                            } else {
+                                // Use physics engine boundaries as fallback
+                                ((self.physics_engine.grid_width / 2.0) - 0.5, (self.physics_engine.grid_height / 2.0) - 0.5)
+                            }
+                        };
+                        
+                        let id = self.game_objects.create_ball(start_x, start_y, 5.0, 0.0);
+                        
+                        // Get the ball's friendly name and store it in the environment
+                        if let Some(ball_name) = self.game_objects.get_ball_name(id) {
+                            self.environment.insert(ball_name, Value::GameObject(id));
                         }
+                        
+                        return Ok(Value::GameObject(id));
                     },
                     "square" => {
                         if let Some(ref grid) = self.grid_state {
@@ -454,6 +447,13 @@ impl Interpreter {
                                 ((grid.width as f64 / 2.0), (grid.height as f64 / 2.0))
                             };
                             let id = self.game_objects.create_square(x, y);
+                            
+                            // Get the square's friendly name and store it in the environment
+                            if let Some(GameObject::Square(square)) = self.game_objects.get_object(id) {
+                                let square_name = square.get_friendly_name();
+                                self.environment.insert(square_name, Value::GameObject(id));
+                            }
+                            
                             Ok(Value::GameObject(id))
                         } else {
                             Err(InterpreterError::RuntimeError("No grid available for square creation".to_string()))
@@ -544,6 +544,7 @@ impl Interpreter {
         match name {
             "grid" => return self.call_grid_function(arguments),
             "tilesize" => return self.call_tilesize_function(arguments),
+            "sample" => return self.call_sample_function(arguments),
             "clear" => {
                 self.grid_state = None;
                 return Ok(Value::String("Grid cleared".to_string()));
@@ -560,6 +561,12 @@ impl Interpreter {
                     ((self.physics_engine.grid_width / 2.0) - 0.5, (self.physics_engine.grid_height / 2.0) - 0.5)
                 };
                 let id = self.game_objects.create_ball(start_x, start_y, 5.0, 0.0);
+                
+                // Get the ball's friendly name and store it in the environment
+                if let Some(ball_name) = self.game_objects.get_ball_name(id) {
+                    self.environment.insert(ball_name, Value::GameObject(id));
+                }
+                
                 return Ok(Value::GameObject(id));
             },
             "destroy" => {
@@ -724,18 +731,113 @@ impl Interpreter {
         }
     }
 
+    fn call_sample_function(&mut self, arguments: &[Expr]) -> Result<Value, InterpreterError> {
+        if arguments.is_empty() {
+            return Err(InterpreterError::RuntimeError("sample expects at least 1 argument".to_string()));
+        }
+
+        // Evaluate the target argument
+        let target_value = self.evaluate_expression(&arguments[0])?;
+        
+        // Determine the target ball based on the argument
+        let target_ball_id = match target_value {
+            // Direct coordinates: sample(0, 0)
+            Value::Number(x) => {
+                if arguments.len() < 2 {
+                    return Err(InterpreterError::RuntimeError("sample with coordinates expects 2 arguments (x, y)".to_string()));
+                }
+                let y_value = self.evaluate_expression(&arguments[1])?;
+                if let Value::Number(y) = y_value {
+                    // Find ball at the specified coordinates
+                    self.game_objects.find_ball_at_position(x as u32, y as u32)
+                } else {
+                    return Err(InterpreterError::TypeError("Y coordinate must be a number".to_string()));
+                }
+            },
+            // Cursor position: sample(cursor)
+            Value::String(ref s) if s == "cursor" => {
+                self.game_objects.find_ball_at_position(self.cursor_x, self.cursor_y)
+            },
+            // Ball name: sample(ball1)
+            Value::String(ref ball_name) => {
+                self.game_objects.find_object_by_name(ball_name)
+            },
+            // Direct ball object reference
+            Value::GameObject(id) => {
+                // Verify it's actually a ball
+                if self.game_objects.is_ball(id) {
+                    Some(id)
+                } else {
+                    return Err(InterpreterError::RuntimeError("Object is not a ball".to_string()));
+                }
+            },
+            _ => {
+                return Err(InterpreterError::TypeError("Invalid target for sample command".to_string()));
+            }
+        };
+
+        let ball_id = match target_ball_id {
+            Some(id) => id,
+            None => {
+                return Err(InterpreterError::RuntimeError("No ball found at specified location".to_string()));
+            }
+        };
+
+        // Open file dialog to select audio file
+        let file_path = match self.open_audio_file_dialog() {
+            Some(path) => path,
+            None => {
+                return Ok(Value::String("File selection cancelled".to_string()));
+            }
+        };
+
+        // Load the audio file into the ball
+        match self.game_objects.load_audio_into_ball(ball_id, &file_path) {
+            Ok(_) => {
+                let ball_name = self.game_objects.get_ball_name(ball_id)
+                    .unwrap_or_else(|| format!("ball{}", ball_id));
+                Ok(Value::String(format!("Loaded audio file '{}' into {}", 
+                    std::path::Path::new(&file_path).file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(&file_path), 
+                    ball_name)))
+            },
+            Err(e) => {
+                Err(InterpreterError::RuntimeError(format!("Failed to load audio: {}", e)))
+            }
+        }
+    }
+
+    fn open_audio_file_dialog(&self) -> Option<String> {
+        use rfd::FileDialog;
+        
+        FileDialog::new()
+            .add_filter("Audio Files", &["wav", "mp3", "ogg", "flac", "m4a", "aac"])
+            .add_filter("WAV Files", &["wav"])
+            .add_filter("MP3 Files", &["mp3"])
+            .add_filter("OGG Files", &["ogg"])
+            .add_filter("FLAC Files", &["flac"])
+            .set_title("Select Audio Sample")
+            .pick_file()
+            .and_then(|path| path.to_str().map(|s| s.to_string()))
+    }
+
     fn show_help(&self) -> String {
-        "CANT Language Commands:\n\
-         grid(width, height) - Create a new grid\n\
-         tilesize(pixels) - Set tile size (4-100 pixels)\n\
-         clear - Clear the current grid\n\
-         help - Show this help message\n\
-         \n\
-         Navigation:\n\
-         Arrow keys - Move cursor\n\
-         Space - Toggle cell\n\
-         Enter - Execute command\n\
-         Escape - Clear command line".to_string()
+        r#"Available commands:
+  grid(width, height) - Create a grid
+  tilesize(size) - Set tile size
+  ball() - Create a ball
+  sample(target) - Load audio file into ball
+    - sample(0, 0) - Load audio into ball at coordinates
+    - sample(cursor) - Load audio into ball at cursor
+    - sample(ball1) - Load audio into specific ball
+  clear - Clear the grid
+  help - Show this help
+  
+Controls:
+  Arrow keys - Move cursor
+  Space - Toggle cell
+  Enter - Execute command"#.to_string()
     }
 
     pub fn get_game_objects(&self) -> &GameObjectManager {

@@ -12,6 +12,7 @@ mod ball;
 mod square;
 mod physics_engine;
 mod game_state;
+mod audio_engine; // Add this line
 
 use winit::{
     event::{Event, WindowEvent, KeyboardInput},

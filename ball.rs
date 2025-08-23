@@ -16,6 +16,8 @@ pub struct Ball {
     pub velocity_x: f64,
     pub velocity_y: f64,
     pub script: Option<String>, // script to execute on collision
+    pub audio_file: Option<String>, // path to audio file
+    pub audio_volume: f32, // volume level (0.0 to 1.0)
 }
 
 // Add to existing Ball implementation
@@ -33,6 +35,8 @@ impl Ball {
             velocity_x: speed * direction.cos(),
             velocity_y: speed * direction.sin(),
             script: None,
+            audio_file: None,
+            audio_volume: 1.0,
         }
     }
     
@@ -84,5 +88,27 @@ impl Ball {
     
     pub fn update_direction_from_velocity(&mut self) {
         self.direction = self.velocity_y.atan2(self.velocity_x);
+    }
+    
+    pub fn set_audio_file(&mut self, file_path: String) {
+        self.audio_file = Some(file_path);
+    }
+    
+    pub fn set_audio_volume(&mut self, volume: f32) {
+        self.audio_volume = volume.clamp(0.0, 1.0);
+    }
+    
+    pub fn play_collision_audio(&self) {
+        if let Some(ref audio_file) = self.audio_file {
+            if let Err(e) = crate::audio_engine::play_audio_sample(audio_file, self.audio_volume) {
+                log::warn!("Failed to play audio for {}: {}", self.get_friendly_name(), e);
+            }
+        }
+    }
+    
+    pub fn load_audio_file<P: AsRef<std::path::Path>>(&mut self, file_path: P) -> Result<(), crate::audio_engine::AudioError> {
+        let sample_key = crate::audio_engine::load_audio_file(&file_path)?;
+        self.audio_file = Some(sample_key);
+        Ok(())
     }
 }
