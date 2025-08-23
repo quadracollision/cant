@@ -34,14 +34,27 @@ impl InputHandler {
     }
 
     fn handle_key_press(&mut self, key_code: VirtualKeyCode) -> InputAction {
+        let shift_pressed = self.pressed_keys.contains(&VirtualKeyCode::LShift) 
+                     || self.pressed_keys.contains(&VirtualKeyCode::RShift);
+        
         match key_code {
             VirtualKeyCode::Up => {
-                self.cursor_moved = true;
-                InputAction::MoveCursor(0, -1)
+                if shift_pressed {
+                    // Shift+Up for command history
+                    InputAction::HistoryPrevious
+                } else {
+                    self.cursor_moved = true;
+                    InputAction::MoveCursor(0, -1)
+                }
             }
             VirtualKeyCode::Down => {
-                self.cursor_moved = true;
-                InputAction::MoveCursor(0, 1)
+                if shift_pressed {
+                    // Shift+Down for command history
+                    InputAction::HistoryNext
+                } else {
+                    self.cursor_moved = true;
+                    InputAction::MoveCursor(0, 1)
+                }
             }
             VirtualKeyCode::Left => {
                 self.cursor_moved = true;
@@ -80,9 +93,14 @@ impl InputHandler {
             
             // Handle text input for commands (including space now)
             _ => {
+                // Don't process shift keys as text input
+                if key_code == VirtualKeyCode::LShift || key_code == VirtualKeyCode::RShift {
+                    return InputAction::None;
+                }
+                
                 if let Some(character) = self.key_code_to_char(key_code) {
                     self.command_buffer.push(character);
-                    InputAction::UpdateCommandBuffer(self.command_buffer.clone())
+                    InputAction::UpdateCommandBufferAndResetHistory(self.command_buffer.clone())
                 } else {
                     InputAction::None
                 }
@@ -158,6 +176,10 @@ impl InputHandler {
     pub fn get_command_buffer(&self) -> &str {
         &self.command_buffer
     }
+    
+    pub fn set_command_buffer(&mut self, buffer: String) {
+        self.command_buffer = buffer;
+    }
 
     pub fn clear_cursor_moved(&mut self) {
         self.cursor_moved = false;
@@ -175,4 +197,7 @@ pub enum InputAction {
     ToggleCell,
     ExecuteCommand(String),
     UpdateCommandBuffer(String),
+    UpdateCommandBufferAndResetHistory(String), 
+    HistoryPrevious,
+    HistoryNext,
 }

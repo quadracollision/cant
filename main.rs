@@ -25,15 +25,15 @@ use crate::graphics::GraphicsRenderer;
 use crate::input::{InputHandler, InputAction};
 use crate::console::Console;
 
-const WIDTH: u32 = 600;
-const HEIGHT: u32 = 600;
+const WIDTH: u32 = 400;
+const HEIGHT: u32 = 400;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
     
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new()
-        .with_title("CANT Language Interpreter v3.0")
+        .with_title("Quadracollision Canticle")
         .with_inner_size(winit::dpi::LogicalSize::new(WIDTH, HEIGHT))
         .with_resizable(true)
         .build(&event_loop)?;
@@ -64,6 +64,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     WindowEvent::KeyboardInput { input, .. } => {
                         let action = input_handler.handle_keyboard_input(&input);
+                        // In the main event loop where InputAction is handled
                         match action {
                             InputAction::MoveCursor(dx, dy) => {
                                 graphics.move_cursor(dx, dy);
@@ -89,70 +90,49 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                                 redraw_requested = true;
                             }
-                            // REMOVE THIS DUPLICATE HANDLER:
-                            // InputAction::ExecuteCommand(command_to_execute) => {
-                            //     if command_to_execute == "clear" {
-                            //         console.clear();
-                            //         redraw_requested = true;
-                            //         return;
-                            //     }
-                            //     
-                            //     // Execute CANT command
-                            //     match interpreter.execute_command(&command_to_execute) {
-                            //         Ok(output) => {
-                            //             if !output.is_empty() {
-                            //                 console.add_output(&output);
-                            //             }
-                            //             
-                            //             // Check if grid was created/modified
-                            //             if let Some(grid_state) = interpreter.get_grid_state() {
-                            //                 graphics.set_grid_size(grid_state.width, grid_state.height);
-                            //             }
-                            //         }
-                            //         Err(error) => {
-                            //             console.add_error(&error.to_string());
-                            //         }
-                            //     }
-                            //     redraw_requested = true;
-                            // }
+                            InputAction::HistoryPrevious => {
+                                console.history_previous();
+                                input_handler.set_command_buffer(console.get_current_command().to_string());
+                                redraw_requested = true; // Add this line
+                            }
+                            InputAction::HistoryNext => {
+                                console.history_next();
+                                input_handler.set_command_buffer(console.get_current_command().to_string());
+                                redraw_requested = true; // Add this line
+                            }
                             InputAction::UpdateCommandBuffer(buffer) => {
                                 console.set_current_command(buffer);
                                 redraw_requested = true;
                             }
+                            InputAction::UpdateCommandBufferAndResetHistory(buffer) => {
+                                console.reset_history_navigation();
+                                console.set_current_command(buffer);
+                                redraw_requested = true;
+                            }
                             InputAction::ExecuteCommand(command) => {
-                                // Handle special commands first
-                                if command == "clear" {
-                                    console.clear();
-                                    redraw_requested = true;
-                                    return;
-                                }
+                                // Add the command to console output with prompt (like a real terminal)
+                                console.add_line(format!("> {}", command));
                                 
-                                match interpreter.execute_command(&command) {
+                                let (cursor_x, cursor_y) = graphics.get_cursor_position();
+                                match interpreter.execute_command(&command, cursor_x, cursor_y) {
                                     Ok(result) => {
-                                        console.add_output(&result);
+                                        if !result.is_empty() {
+                                            console.add_line(result);
+                                        }
                                         
-                                        // Check if grid was created/updated
+                                        // Check if grid was created/modified and update graphics
                                         if let Some(grid_state) = interpreter.get_grid_state() {
                                             graphics.set_grid_size(grid_state.width, grid_state.height);
                                         }
-                                        
-                                        // Check for tile size update
-                                        if let Some(tile_size_value) = interpreter.get_environment_value("__tile_size") {
-                                            if let Some(size) = tile_size_value.as_number() {
-                                                let current_size = graphics.get_tile_size();
-                                                
-                                                if current_size != size as u32 {
-                                                    graphics.set_tile_size(size as u32);
-                                                    graphics.force_redraw();
-                                                    redraw_requested = true;
-                                                }
-                                            }
-                                        }
-                                    },
+                                    }
                                     Err(e) => {
-                                        console.add_output(&format!("Error: {}", e));
+                                        console.add_line(format!("Error: {}", e));
                                     }
                                 }
+                                
+                                // Clear both the console and input handler command buffers
+                                console.execute_command(command);
+                                input_handler.set_command_buffer(String::new()); // Add this line
                                 redraw_requested = true;
                             }
                             InputAction::None => {}

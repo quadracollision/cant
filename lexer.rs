@@ -23,6 +23,7 @@ pub enum TokenType {
     Clear,      // New: for "clear" command
     Balls,      // New: for "balls" keyword
     Squares,    // New: for "squares" keyword
+    Cursor,     // New: for "cursor" keyword
     
     // Direction keywords
     Left,
@@ -293,6 +294,7 @@ impl Lexer {
             "clear" => TokenType::Clear,
             "balls" => TokenType::Balls,
             "squares" => TokenType::Squares,
+            "cursor" => TokenType::Cursor,
             "left" => TokenType::Left,
             "right" => TokenType::Right,
             "up" => TokenType::Up,

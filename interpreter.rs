@@ -75,6 +75,8 @@ pub struct Interpreter {
     game_objects: GameObjectManager,
     game_state_manager: GameStateManager,
     physics_engine: PhysicsEngine,
+    cursor_x: u32,
+    cursor_y: u32,
 }
 
 impl Interpreter {
@@ -85,50 +87,80 @@ impl Interpreter {
             environment: HashMap::new(),
             game_objects: GameObjectManager::new(),
             game_state_manager: GameStateManager::new(),
-            physics_engine: PhysicsEngine::new(1.0, 1.0, 1.0), // Minimal placeholder values
+            physics_engine: PhysicsEngine::new(1.0, 1.0, 1.0),
+            cursor_x: 0,
+            cursor_y: 0,
         };
         interpreter.register_builtins();
         interpreter
     }
 
+    // Update the execute_play method
     fn execute_play(&mut self) -> Result<Value, InterpreterError> {
-        if !self.game_state_manager.is_playing() {
-            // First time playing - save current state
-            if self.game_state_manager.saved_state.is_none() {
-                self.game_state_manager.save_state(
+        if self.game_state_manager.is_paused() {
+            // Resume from paused state
+            self.game_state_manager.start_play();
+            Ok(Value::String("Game resumed".to_string()))
+        } else if !self.game_state_manager.is_playing() {
+            // Starting fresh or from stopped state
+            if !self.game_state_manager.has_saved_state() {
+                // First time playing - save original state
+                self.game_state_manager.save_original_state(
                     &self.game_objects,
                     &self.grid_state,
                     &self.environment
                 );
             } else {
-                // Restore to saved state
-                if let Some(saved) = self.game_state_manager.restore_state() {
-                    self.game_objects = saved.game_objects.clone();
-                    self.grid_state = saved.grid_state.clone();
-                    self.environment = saved.environment.clone();
+                // Coming from stopped state - restore to original
+                if let Some(saved) = self.game_state_manager.restore_original_state() {
+                    self.game_objects = saved.game_objects;
+                    self.grid_state = saved.grid_state;
+                    self.environment = saved.environment;
+                    
+                    // Re-save the original state since we took it
+                    self.game_state_manager.save_original_state(
+                        &self.game_objects,
+                        &self.grid_state,
+                        &self.environment
+                    );
                 }
             }
+            
+            self.game_state_manager.start_play();
+            Ok(Value::String("Game started".to_string()))
+        } else {
+            // Already playing
+            Ok(Value::String("Game is already playing".to_string()))
         }
-        
-        self.game_state_manager.start_play();
-        Ok(Value::String("Game started".to_string()))
     }
-
+    
+    // Update the execute_pause method
     fn execute_pause(&mut self) -> Result<Value, InterpreterError> {
-        self.game_state_manager.pause_play();
-        Ok(Value::String("Game paused".to_string()))
+        if self.game_state_manager.is_playing() {
+            // Save current state before pausing
+            self.game_state_manager.save_paused_state(
+                &self.game_objects,
+                &self.grid_state,
+                &self.environment
+            );
+            self.game_state_manager.pause_play();
+            Ok(Value::String("Game paused".to_string()))
+        } else {
+            Ok(Value::String("Game is not currently playing".to_string()))
+        }
     }
-
+    
+    // Update the execute_stop method
     fn execute_stop(&mut self) -> Result<Value, InterpreterError> {
         // Stop the physics simulation
         self.game_state_manager.stop_play();
         
-        // Restore the saved state if it exists
-        if let Some(saved) = self.game_state_manager.restore_state() {
-            self.game_objects = saved.game_objects;
-            self.grid_state = saved.grid_state;
-            self.environment = saved.environment;
-            Ok(Value::String("Game stopped and state restored".to_string()))
+        // Restore the original saved state if it exists
+        if let Some(saved) = self.game_state_manager.get_saved_state() {
+            self.game_objects = saved.game_objects.clone();
+            self.grid_state = saved.grid_state.clone();
+            self.environment = saved.environment.clone();
+            Ok(Value::String("Game stopped and state restored to original".to_string()))
         } else {
             Ok(Value::String("Game stopped (no saved state to restore)".to_string()))
         }
@@ -154,10 +186,14 @@ impl Interpreter {
         // Built-in functions will be handled specially in function calls
     }
 
-    pub fn execute_command(&mut self, input: &str) -> Result<String, InterpreterError> {
+    pub fn execute_command(&mut self, input: &str, cursor_x: u32, cursor_y: u32) -> Result<String, InterpreterError> {
         if input.trim().is_empty() {
             return Ok(String::new());
         }
+
+        // Update cursor position
+        self.cursor_x = cursor_x;
+        self.cursor_y = cursor_y;
 
         // Tokenize
         let mut lexer = Lexer::new(input);
@@ -255,6 +291,12 @@ impl Interpreter {
             Expr::Number(n) => Ok(Value::Number(*n)),
             Expr::String(s) => Ok(Value::String(s.clone())),
             Expr::Identifier(name) => {
+                // Handle special cursor identifier
+                if name == "cursor" {
+                    // Return cursor position as a special value that can be used in create/destroy
+                    return Ok(Value::String(format!("cursor:{}:{}", self.cursor_x, self.cursor_y)));
+                }
+                
                 if let Some(value) = self.environment.get(name) {
                     Ok(value.clone())
                 } else if let Some(value) = self.globals.get(name) {
@@ -282,41 +324,84 @@ impl Interpreter {
             Expr::CreateCall { object_type, arguments } => {
                 match object_type.as_str() {
                     "ball" => {
-                        // Require a grid to exist before creating a ball
                         if let Some(ref grid) = self.grid_state {
-                            let (start_x, start_y) = if arguments.len() >= 2 {
-                                // Use provided x,y coordinates as grid cell indices
-                                let x = self.evaluate_expression(&arguments[0])?.as_number()
-                                    .ok_or_else(|| InterpreterError::TypeError("Ball x coordinate must be a number".to_string()))?;
-                                let y = self.evaluate_expression(&arguments[1])?.as_number()
-                                    .ok_or_else(|| InterpreterError::TypeError("Ball y coordinate must be a number".to_string()))?;
-                                // Add 0.5 to center the ball in the grid cell
-                                (x + 0.5, y + 0.5)
+                            let (start_x, start_y) = if arguments.len() >= 1 {
+                                let first_arg = self.evaluate_expression(&arguments[0])?;
+                                
+                                // Check if first argument is cursor
+                                if let Value::String(s) = &first_arg {
+                                    if s.starts_with("cursor:") {
+                                        // Extract cursor coordinates
+                                        let parts: Vec<&str> = s.split(':').collect();
+                                        if parts.len() == 3 {
+                                            let cursor_x = parts[1].parse::<f64>().unwrap_or(0.0);
+                                            let cursor_y = parts[2].parse::<f64>().unwrap_or(0.0);
+                                            (cursor_x + 0.5, cursor_y + 0.5)
+                                        } else {
+                                            return Err(InterpreterError::RuntimeError("Invalid cursor format".to_string()));
+                                        }
+                                    } else {
+                                        return Err(InterpreterError::TypeError("Expected cursor or coordinates".to_string()));
+                                    }
+                                } else if arguments.len() >= 2 {
+                                    // Use provided x,y coordinates
+                                    let x = first_arg.as_number()
+                                        .ok_or_else(|| InterpreterError::TypeError("Ball x coordinate must be a number".to_string()))?;
+                                    let y = self.evaluate_expression(&arguments[1])?.as_number()
+                                        .ok_or_else(|| InterpreterError::TypeError("Ball y coordinate must be a number".to_string()))?;
+                                    (x + 0.5, y + 0.5)
+                                } else {
+                                    return Err(InterpreterError::RuntimeError("create ball requires cursor or x,y coordinates".to_string()));
+                                }
                             } else {
-                                // Default to center of grid
-                                ((grid.width as f64 / 2.0), (grid.height as f64 / 2.0))
+                                // Default to center
+                                ((grid.width as f64 / 2.0) - 0.5, (grid.height as f64 / 2.0) - 0.5)
                             };
                             let id = self.game_objects.create_ball(start_x, start_y, 5.0, 0.0);
-                            return Ok(Value::GameObject(id));
+                            Ok(Value::GameObject(id))
                         } else {
-                            return Err(InterpreterError::RuntimeError(
-                                "Cannot create ball: No grid exists. Create a grid first with grid(x, y)".to_string()
-                            ));
+                            Err(InterpreterError::RuntimeError("No grid available for ball creation".to_string()))
                         }
                     },
                     "square" => {
-                        let x = if arguments.len() > 0 {
-                            self.evaluate_expression(&arguments[0])?.as_number()
-                                .ok_or_else(|| InterpreterError::TypeError("x must be a number".to_string()))?
-                        } else { 0.0 };
-                        
-                        let y = if arguments.len() > 1 {
-                            self.evaluate_expression(&arguments[1])?.as_number()
-                                .ok_or_else(|| InterpreterError::TypeError("y must be a number".to_string()))?
-                        } else { 0.0 };
-                        
-                        let id = self.game_objects.create_square(x, y);
-                        Ok(Value::GameObject(id))
+                        if let Some(ref grid) = self.grid_state {
+                            let (x, y) = if arguments.len() >= 1 {
+                                let first_arg = self.evaluate_expression(&arguments[0])?;
+                                
+                                // Check if first argument is cursor
+                                if let Value::String(s) = &first_arg {
+                                    if s.starts_with("cursor:") {
+                                        // Extract cursor coordinates
+                                        let parts: Vec<&str> = s.split(':').collect();
+                                        if parts.len() == 3 {
+                                            let cursor_x = parts[1].parse::<f64>().unwrap_or(0.0);
+                                            let cursor_y = parts[2].parse::<f64>().unwrap_or(0.0);
+                                            (cursor_x, cursor_y)
+                                        } else {
+                                            return Err(InterpreterError::RuntimeError("Invalid cursor format".to_string()));
+                                        }
+                                    } else {
+                                        return Err(InterpreterError::TypeError("Expected cursor or coordinates".to_string()));
+                                    }
+                                } else if arguments.len() >= 2 {
+                                    // Use provided x,y coordinates
+                                    let x = first_arg.as_number()
+                                        .ok_or_else(|| InterpreterError::TypeError("Square x coordinate must be a number".to_string()))?;
+                                    let y = self.evaluate_expression(&arguments[1])?.as_number()
+                                        .ok_or_else(|| InterpreterError::TypeError("Square y coordinate must be a number".to_string()))?;
+                                    (x, y)
+                                } else {
+                                    return Err(InterpreterError::RuntimeError("create square requires cursor or x,y coordinates".to_string()));
+                                }
+                            } else {
+                                // Default to center
+                                ((grid.width as f64 / 2.0), (grid.height as f64 / 2.0))
+                            };
+                            let id = self.game_objects.create_square(x, y);
+                            Ok(Value::GameObject(id))
+                        } else {
+                            Err(InterpreterError::RuntimeError("No grid available for square creation".to_string()))
+                        }
                     },
                     _ => Err(InterpreterError::RuntimeError(format!("Unknown object type: {}", object_type)))
                 }
@@ -422,16 +507,47 @@ impl Interpreter {
                 return Ok(Value::GameObject(id));
             },
             "destroy" => {
-                // Handle destroy function inline
                 if arguments.len() != 1 {
                     return Err(InterpreterError::RuntimeError("destroy expects 1 argument".to_string()));
                 }
-                let obj_id = self.evaluate_expression(&arguments[0])?;
-                if let Value::GameObject(id) = obj_id {
-                    self.game_objects.destroy_object(id);
-                    return Ok(Value::String("Object destroyed".to_string()));
-                } else {
-                    return Err(InterpreterError::TypeError("destroy expects a game object".to_string()));
+                
+                let arg_value = self.evaluate_expression(&arguments[0])?;
+                
+                match arg_value {
+                    Value::GameObject(id) => {
+                        self.game_objects.destroy_object(id);
+                        return Ok(Value::String("Object destroyed".to_string()));
+                    },
+                    Value::String(s) if s.starts_with("cursor:") => {
+                        // Extract cursor coordinates and find objects at that position
+                        let parts: Vec<&str> = s.split(':').collect();
+                        if parts.len() == 3 {
+                            let cursor_x = parts[1].parse::<u32>().unwrap_or(0);
+                            let cursor_y = parts[2].parse::<u32>().unwrap_or(0);
+                            
+                            // Find objects at cursor position
+                            let objects_at_cursor = self.game_objects.find_objects_at_grid_with_names(cursor_x, cursor_y);
+                            
+                            if objects_at_cursor.is_empty() {
+                                return Ok(Value::String("No objects found at cursor position".to_string()));
+                            }
+                            
+                            // Destroy the first object found (could be enhanced to specify type)
+                            if let Some(obj_name) = objects_at_cursor.first() {
+                                if let Some(obj_id) = self.game_objects.find_object_by_name(obj_name) {
+                                    self.game_objects.destroy_object(obj_id);
+                                    return Ok(Value::String(format!("Destroyed {} at cursor position", obj_name)));
+                                }
+                            }
+                            
+                            return Ok(Value::String("Failed to destroy object at cursor".to_string()));
+                        } else {
+                            return Err(InterpreterError::RuntimeError("Invalid cursor format".to_string()));
+                        }
+                    },
+                    _ => {
+                        return Err(InterpreterError::TypeError("destroy expects a game object or cursor position".to_string()));
+                    }
                 }
             },
             _ => {}

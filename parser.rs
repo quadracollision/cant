@@ -407,6 +407,10 @@ impl Parser {
                 self.advance();
                 Ok(Expr::Identifier(name))
             },
+            TokenType::Cursor => {
+                self.advance();
+                Ok(Expr::Identifier("cursor".to_string()))
+            },
             TokenType::Number(n) => {
                 let n = *n;
                 self.advance();
