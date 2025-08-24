@@ -97,6 +97,26 @@ impl GraphicsRenderer {
         Self::render_console_static(frame, console_lines, self.width, self.height);
     }
     
+    fn color_name_to_rgba(color_name: &str) -> [u8; 4] {
+        match color_name.to_lowercase().as_str() {
+            "red" => [255, 0, 0, 255],
+            "blue" => [0, 0, 255, 255],
+            "green" => [0, 255, 0, 255],
+            "yellow" => [255, 255, 0, 255],
+            "orange" => [255, 165, 0, 255],
+            "purple" => [128, 0, 128, 255],
+            "pink" => [255, 192, 203, 255],
+            "cyan" => [0, 255, 255, 255],
+            "magenta" => [255, 0, 255, 255],
+            "white" => [255, 255, 255, 255],
+            "black" => [0, 0, 0, 255],
+            "gray" => [128, 128, 128, 255],
+            "brown" => [165, 42, 42, 255],
+            "lime" => [0, 255, 0, 255],
+            _ => [255, 255, 255, 255], // Default to white
+        }
+    }
+
     fn render_game_objects_static(frame: &mut [u8], objects: &GameObjectManager, width: u32, height: u32, grid_width: u32, grid_height: u32, tile_size: u32) {
         // Calculate the same dynamic tile size as the grid rendering
         let available_width = width.saturating_sub(GRID_PADDING * 2);
@@ -117,20 +137,19 @@ impl GraphicsRenderer {
         for obj in objects.get_all_objects().values() {
             match obj {
                 GameObject::Ball(ball) => {
-                    // Ball coordinates are already centered in grid cells (e.g., 0.5, 0.5 for cell 0,0)
-                    // Convert directly to screen coordinates
                     let screen_x = start_x + (ball.x * dynamic_tile_size as f64) as u32;
                     let screen_y = start_y + (ball.y * dynamic_tile_size as f64) as u32;
                     
                     let radius = (dynamic_tile_size as f64 * 0.4) as u32;
-                    Self::draw_circle_static(frame, screen_x, screen_y, radius, [255, 100, 100, 255], width, height);
+                    let color = Self::color_name_to_rgba(ball.get_color());
+                    Self::draw_circle_static(frame, screen_x, screen_y, radius, color, width, height);
                 },
                 GameObject::Square(square) => {
-                    // Position square at the top-left corner of its grid cell and fill the entire cell
                     let screen_x = start_x + (square.x * dynamic_tile_size as f64) as u32;
                     let screen_y = start_y + (square.y * dynamic_tile_size as f64) as u32;
-                    let size = dynamic_tile_size; // Use full tile size to occupy entire grid cell
-                    Self::draw_square_static(frame, screen_x, screen_y, size, [100, 100, 255, 255], width, height);
+                    let size = dynamic_tile_size;
+                    let color = Self::color_name_to_rgba(square.get_color());
+                    Self::draw_square_static(frame, screen_x, screen_y, size, color, width, height);
                 }
             }
         }

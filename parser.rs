@@ -109,35 +109,81 @@ impl Parser {
     }
 
     fn set_statement(&mut self) -> Result<Stmt, ParseError> {
-        self.consume(&TokenType::Direction, "Expected 'direction' after 'set'")?;
-        
-        let object_name = match &self.peek().token_type {
-            TokenType::Identifier(name) => {
-                let name = name.clone();
-                self.advance();
-                name
-            },
-            TokenType::Cursor => {
-                self.advance();
-                "cursor".to_string()
-            },
-            _ => return Err(ParseError::ExpectedIdentifier(self.peek().line, self.peek().column)),
-        };
-        
-        let direction = match &self.peek().token_type {
-            TokenType::Left => { self.advance(); DirectionValue::Left },
-            TokenType::Right => { self.advance(); DirectionValue::Right },
-            TokenType::Up => { self.advance(); DirectionValue::Up },
-            TokenType::Down => { self.advance(); DirectionValue::Down },
-            TokenType::UpLeft => { self.advance(); DirectionValue::UpLeft },
-            TokenType::UpRight => { self.advance(); DirectionValue::UpRight },
-            TokenType::DownLeft => { self.advance(); DirectionValue::DownLeft },
-            TokenType::DownRight => { self.advance(); DirectionValue::DownRight },
-            _ => return Err(ParseError::UnexpectedToken(self.peek().clone())),
-        };
-        
-        self.consume_newline_or_semicolon()?;
-        Ok(Stmt::SetDirection { object_name, direction })
+        // Check if it's "set direction" or "set color"
+        if self.check(&TokenType::Direction) {
+            self.advance(); // consume 'direction'
+            
+            // In set_statement() for "set direction"
+            let object_name = match &self.peek().token_type {
+                TokenType::Identifier(name) => {
+                    let name = name.clone();
+                    self.advance();
+                    name
+                },
+                TokenType::Cursor => {
+                    self.advance();
+                    "cursor".to_string()
+                },
+                _ => return Err(ParseError::ExpectedIdentifier(self.peek().line, self.peek().column)),
+            };
+            
+            let direction = match &self.peek().token_type {
+                TokenType::Left => { self.advance(); DirectionValue::Left },
+                TokenType::Right => { self.advance(); DirectionValue::Right },
+                TokenType::Up => { self.advance(); DirectionValue::Up },
+                TokenType::Down => { self.advance(); DirectionValue::Down },
+                TokenType::UpLeft => { self.advance(); DirectionValue::UpLeft },
+                TokenType::UpRight => { self.advance(); DirectionValue::UpRight },
+                TokenType::DownLeft => { self.advance(); DirectionValue::DownLeft },
+                TokenType::DownRight => { self.advance(); DirectionValue::DownRight },
+                _ => return Err(ParseError::UnexpectedToken(self.peek().clone())),
+            };
+            
+            self.consume_newline_or_semicolon()?;
+            Ok(Stmt::SetDirection { object_name, direction })
+        } else if self.check(&TokenType::Color) {
+            self.advance(); // consume 'color'
+            
+            let object_name = match &self.peek().token_type {
+                TokenType::Identifier(name) => {
+                    let name = name.clone();
+                    self.advance();
+                    name
+                },
+                TokenType::Cursor => {
+                    self.advance();
+                    "cursor".to_string()
+                },
+                _ => return Err(ParseError::ExpectedIdentifier(self.peek().line, self.peek().column)),
+            };
+            
+            let color = match &self.peek().token_type {
+                TokenType::Red => { self.advance(); ColorValue::Red },
+                TokenType::Blue => { self.advance(); ColorValue::Blue },
+                TokenType::Green => { self.advance(); ColorValue::Green },
+                TokenType::Yellow => { self.advance(); ColorValue::Yellow },
+                TokenType::Orange => { self.advance(); ColorValue::Orange },
+                TokenType::Purple => { self.advance(); ColorValue::Purple },
+                TokenType::Pink => { self.advance(); ColorValue::Pink },
+                TokenType::Cyan => { self.advance(); ColorValue::Cyan },
+                TokenType::Magenta => { self.advance(); ColorValue::Magenta },
+                TokenType::White => { self.advance(); ColorValue::White },
+                TokenType::Black => { self.advance(); ColorValue::Black },
+                TokenType::Gray => { self.advance(); ColorValue::Gray },
+                TokenType::Brown => { self.advance(); ColorValue::Brown },
+                TokenType::Lime => { self.advance(); ColorValue::Lime },
+                _ => return Err(ParseError::UnexpectedToken(self.peek().clone())),
+            };
+            
+            self.consume_newline_or_semicolon()?;
+            Ok(Stmt::SetColor { object_name, color })
+        } else {
+            Err(ParseError::Expected {
+                expected: "'direction' or 'color'".to_string(),
+                found: self.peek().clone(),
+                message: "Expected 'direction' or 'color' after 'set'".to_string(),
+            })
+        }
     }
 
     fn let_statement(&mut self) -> Result<Stmt, ParseError> {

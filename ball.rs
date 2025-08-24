@@ -18,6 +18,7 @@ pub struct Ball {
     pub script: Option<String>, // script to execute on collision
     pub audio_file: Option<String>, // path to audio file
     pub audio_volume: f32, // volume level (0.0 to 1.0)
+    pub color: String, // New: store the color as a string
 }
 
 // Add to existing Ball implementation
@@ -37,6 +38,7 @@ impl Ball {
             script: None,
             audio_file: None,
             audio_volume: 1.0,
+            color: "white".to_string(), // Default color
         }
     }
     
@@ -110,5 +112,13 @@ impl Ball {
         let sample_key = crate::audio_engine::load_audio_file(&file_path)?;
         self.audio_file = Some(sample_key);
         Ok(())
+    }
+    
+    pub fn set_color(&mut self, color: String) {
+        self.color = color;
+    }
+    
+    pub fn get_color(&self) -> &str {
+        &self.color
     }
 }

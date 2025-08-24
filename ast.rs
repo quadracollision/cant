@@ -76,6 +76,10 @@ pub enum Stmt {
         object_name: String,
         direction: DirectionValue,
     },
+    SetColor {
+        object_name: String,
+        color: ColorValue,
+    },
     Play,   // New: simple play command
     Pause,  // New: pause command
     Stop,   // New: stop command to restore pre-play state
@@ -97,6 +101,24 @@ pub enum DirectionValue {
     UpRight,
     DownLeft,
     DownRight,
+}
+
+#[derive(Debug, Clone)]
+pub enum ColorValue {
+    Red,
+    Blue,
+    Green,
+    Yellow,
+    Orange,
+    Purple,
+    Pink,
+    Cyan,
+    Magenta,
+    White,
+    Black,
+    Gray,
+    Brown,
+    Lime,
 }
 
 #[derive(Debug, Clone)]

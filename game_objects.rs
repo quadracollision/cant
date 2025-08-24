@@ -204,6 +204,14 @@ impl GameObjectManager {
         }
     }
 
+    pub fn get_square_mut(&mut self, square_id: u32) -> Option<&mut Square> {
+        if let Some(GameObject::Square(square)) = self.objects.get_mut(&square_id) {
+            Some(square)
+        } else {
+            None
+        }
+    }
+
     pub fn clear_all_balls(&mut self) -> usize {
         let ball_ids: Vec<u32> = self.balls.keys().cloned().collect();
         let count = ball_ids.len();

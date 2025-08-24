@@ -17,6 +17,7 @@ pub enum TokenType {
     Return,
     Set,        // for "set direction" command
     Direction,  // for "direction" keyword
+    Color,      // New: for "color" keyword
     Play,       // New: for "play" command
     Pause,      // Add this missing token
     Stop,       // New: for "stop" command
@@ -35,6 +36,22 @@ pub enum TokenType {
     UpRight,
     DownLeft,
     DownRight,
+    
+    // Color keywords
+    Red,
+    Blue,
+    Green,
+    Yellow,
+    Orange,
+    Purple,
+    Pink,
+    Cyan,
+    Magenta,
+    White,
+    Black,
+    Gray,
+    Brown,
+    Lime,
     
     // Operators
     Plus,
@@ -289,11 +306,12 @@ impl Lexer {
             "return" => TokenType::Return,
             "set" => TokenType::Set,
             "direction" => TokenType::Direction,
+            "color" => TokenType::Color,
             "play" => TokenType::Play,
             "pause" => TokenType::Pause,
             "stop" => TokenType::Stop,
             "clear" => TokenType::Clear,
-            "destroy" => TokenType::Destroy,  // Add this line
+            "destroy" => TokenType::Destroy,
             "balls" => TokenType::Balls,
             "squares" => TokenType::Squares,
             "cursor" => TokenType::Cursor,
@@ -305,6 +323,21 @@ impl Lexer {
             "up-right" | "right-up" => TokenType::UpRight,
             "down-left" | "left-down" => TokenType::DownLeft,
             "down-right" | "right-down" => TokenType::DownRight,
+            // Color keywords
+            "red" => TokenType::Red,
+            "blue" => TokenType::Blue,
+            "green" => TokenType::Green,
+            "yellow" => TokenType::Yellow,
+            "orange" => TokenType::Orange,
+            "purple" => TokenType::Purple,
+            "pink" => TokenType::Pink,
+            "cyan" => TokenType::Cyan,
+            "magenta" => TokenType::Magenta,
+            "white" => TokenType::White,
+            "black" => TokenType::Black,
+            "gray" => TokenType::Gray,
+            "brown" => TokenType::Brown,
+            "lime" => TokenType::Lime,
             _ => TokenType::Identifier(text),
         }
     }

@@ -251,6 +251,9 @@ impl Interpreter {
             Stmt::SetDirection { object_name, direction } => {
                 self.execute_set_direction(object_name, direction)
             },
+            Stmt::SetColor { object_name, color } => {
+                self.execute_set_color(object_name, color)
+            },
             Stmt::Play => self.execute_play(),
             Stmt::Pause => self.execute_pause(),
             Stmt::Stop => self.execute_stop(),
@@ -894,4 +897,65 @@ Controls:
         let count = self.game_objects.clear_all_squares();
         Ok(Value::String(format!("Cleared {} square(s)", count)))
     }
+
+    fn execute_set_color(&mut self, object_name: &str, color: &ColorValue) -> Result<Value, InterpreterError> {
+        let color_string = match color {
+            ColorValue::Red => "red".to_string(),
+            ColorValue::Green => "green".to_string(),
+            ColorValue::Blue => "blue".to_string(),
+            ColorValue::Yellow => "yellow".to_string(),
+            ColorValue::White => "white".to_string(),
+            ColorValue::Black => "black".to_string(),
+            ColorValue::Purple => "purple".to_string(),
+            ColorValue::Orange => "orange".to_string(),
+            ColorValue::Pink => "pink".to_string(),
+            ColorValue::Brown => "brown".to_string(),
+            ColorValue::Gray => "gray".to_string(),
+            ColorValue::Cyan => "cyan".to_string(),
+            ColorValue::Magenta => "magenta".to_string(),
+            ColorValue::Lime => "lime".to_string(),
+        };
+    
+    let object_id = if object_name == "cursor" {
+        // Find object at cursor position
+        let object_names_at_cursor = self.game_objects.find_objects_at_grid_with_names(self.cursor_x, self.cursor_y);
+        println!("Debug: Objects at cursor ({}, {}): {:?}", self.cursor_x, self.cursor_y, object_names_at_cursor);
+        
+        if object_names_at_cursor.is_empty() {
+            return Err(InterpreterError::RuntimeError("No object found at cursor position".to_string()));
+        }
+        // Use the first object found at cursor position and get its ID
+        let first_object_name = &object_names_at_cursor[0];
+        println!("Debug: First object name: {}", first_object_name);
+        
+        let found_id = self.game_objects.find_object_by_name(first_object_name)
+            .ok_or_else(|| InterpreterError::RuntimeError(format!("Object '{}' not found", first_object_name)))?;
+        println!("Debug: Found object ID: {}", found_id);
+        found_id
+    } else {
+        // Find the object by name
+        self.game_objects.find_object_by_name(object_name)
+            .ok_or_else(|| InterpreterError::RuntimeError(format!("Object '{}' not found", object_name)))?
+    };
+    
+    // Apply the color to the actual game object using the object_id we found
+    if let Some(ball) = self.game_objects.get_ball_mut(object_id) {
+        println!("Debug: Setting color on ball {}", object_id);
+        ball.set_color(color_string.clone());
+    } else if let Some(square) = self.game_objects.get_square_mut(object_id) {
+        println!("Debug: Setting color on square {}", object_id);
+        square.set_color(color_string.clone());
+    } else {
+        println!("Debug: Object {} is neither a ball nor a square", object_id);
+        return Err(InterpreterError::RuntimeError(format!("Object {} is neither a ball nor a square", object_id)));
+    }
+    
+    let target_name = if object_name == "cursor" {
+        format!("object at cursor position")
+    } else {
+        object_name.to_string()
+    };
+    
+    Ok(Value::String(format!("Set color of {} to {:?}", target_name, color)))
 }
+} // Add this closing brace for the impl Interpreter block

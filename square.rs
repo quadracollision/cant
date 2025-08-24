@@ -12,6 +12,7 @@ pub struct Square {
     pub x: f64,
     pub y: f64,
     pub script: Option<String>, // script to execute when collided with
+    pub color: String, // New: store the color as a string
 }
 
 impl Square {
@@ -24,6 +25,7 @@ impl Square {
             x,
             y,
             script: None,
+            color: "white".to_string(), // Default color
         }
     }
     
@@ -38,5 +40,13 @@ impl Square {
     pub fn set_position(&mut self, x: f64, y: f64) {
         self.x = x;
         self.y = y;
+    }
+    
+    pub fn set_color(&mut self, color: String) {
+        self.color = color;
+    }
+    
+    pub fn get_color(&self) -> &str {
+        &self.color
     }
 }
