@@ -1,5 +1,5 @@
 use crate::lexer::{Token, TokenType};
-use crate::ast::*;
+use crate::ast::{Expr, Stmt, BinaryOp, UnaryOp, DirectionValue, ColorValue, SpeedModification, Program};
 use std::fmt;
 
 pub struct Parser {
@@ -111,7 +111,7 @@ impl Parser {
     }
 
     fn set_statement(&mut self) -> Result<Stmt, ParseError> {
-        // Check if it's "set direction" or "set color"
+        // Check if it's "set direction", "set color", or "set speed"
         if self.check(&TokenType::Direction) {
             self.advance(); // consume 'direction'
             
@@ -179,11 +179,73 @@ impl Parser {
             
             self.consume_newline_or_semicolon()?;
             Ok(Stmt::SetColor { object_name, color })
+        } else if self.check(&TokenType::Speed) {
+            self.advance(); // consume 'speed'
+            
+            let object_name = match &self.peek().token_type {
+                TokenType::Identifier(name) => {
+                    let name = name.clone();
+                    self.advance();
+                    name
+                },
+                TokenType::Cursor => {
+                    self.advance();
+                    "cursor".to_string()
+                },
+                _ => return Err(ParseError::ExpectedIdentifier(self.peek().line, self.peek().column)),
+            };
+            
+            // Check for + or - prefix for relative speed changes
+            let speed = match &self.peek().token_type {
+                TokenType::Plus => {
+                    self.advance(); // consume '+'
+                    match &self.peek().token_type {
+                        TokenType::Number(value) => {
+                            let speed_value = *value;
+                            self.advance();
+                            SpeedModification::Relative(speed_value)
+                        },
+                        _ => return Err(ParseError::Expected {
+                            expected: "number".to_string(),
+                            found: self.peek().clone(),
+                            message: "Expected a number after '+' for relative speed".to_string(),
+                        }),
+                    }
+                },
+                TokenType::Minus => {
+                    self.advance(); // consume '-'
+                    match &self.peek().token_type {
+                        TokenType::Number(value) => {
+                            let speed_value = -*value; // negative for subtraction
+                            self.advance();
+                            SpeedModification::Relative(speed_value)
+                        },
+                        _ => return Err(ParseError::Expected {
+                            expected: "number".to_string(),
+                            found: self.peek().clone(),
+                            message: "Expected a number after '-' for relative speed".to_string(),
+                        }),
+                    }
+                },
+                TokenType::Number(value) => {
+                    let speed_value = *value;
+                    self.advance();
+                    SpeedModification::Absolute(speed_value)
+                },
+                _ => return Err(ParseError::Expected {
+                    expected: "number, '+number', or '-number'".to_string(),
+                    found: self.peek().clone(),
+                    message: "Expected a number or relative speed change (+/-)".to_string(),
+                }),
+            };
+            
+            self.consume_newline_or_semicolon()?;
+            Ok(Stmt::SetSpeed { object_name, speed })
         } else {
             Err(ParseError::Expected {
-                expected: "'direction' or 'color'".to_string(),
+                expected: "'direction', 'color', or 'speed'".to_string(),
                 found: self.peek().clone(),
-                message: "Expected 'direction' or 'color' after 'set'".to_string(),
+                message: "Expected 'direction', 'color', or 'speed' after 'set'".to_string(),
             })
         }
     }
@@ -518,6 +580,15 @@ impl Parser {
                 let expr = self.expression()?;
                 self.consume(&TokenType::RightParen, "Expected ')' after expression")?;
                 Ok(expr)
+            },
+            TokenType::Speed => {
+                // Allow 'speed' to be used as a function name
+                self.advance();
+                Ok(Expr::Identifier("speed".to_string()))
+            },
+            TokenType::Cursor => {
+                self.advance();
+                Ok(Expr::Identifier("cursor".to_string()))
             },
             _ => Err(ParseError::UnexpectedToken(self.peek().clone())),
         }

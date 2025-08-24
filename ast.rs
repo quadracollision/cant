@@ -50,6 +50,12 @@ pub enum UnaryOp {
 }
 
 #[derive(Debug, Clone)]
+pub enum SpeedModification {
+    Absolute(f64),    // set speed ball1 50
+    Relative(f64),    // set speed ball1 +3 or set speed ball1 -0.3
+}
+
+#[derive(Debug, Clone)]
 pub enum Stmt {
     Expression(Expr),
     Let {
@@ -79,6 +85,10 @@ pub enum Stmt {
     SetColor {
         object_name: String,
         color: ColorValue,
+    },
+    SetSpeed {
+        object_name: String,
+        speed: SpeedModification,
     },
     Label {
         object_name: String,

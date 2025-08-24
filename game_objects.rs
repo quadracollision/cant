@@ -183,6 +183,18 @@ impl GameObjectManager {
         }
     }
     
+    pub fn set_ball_speed(&mut self, object_id: u32, speed: f64) -> Result<(), String> {
+        if let Some(GameObject::Ball(ball)) = self.objects.get_mut(&object_id) {
+            ball.speed = speed;
+            // Update velocity components to maintain current direction
+            ball.velocity_x = speed * ball.direction.cos();
+            ball.velocity_y = speed * ball.direction.sin();
+            Ok(())
+        } else {
+            Err("Object is not a ball or does not exist".to_string())
+        }
+    }
+    
     pub fn get_all_squares(&self) -> Vec<Square> {
         self.objects.values()
             .filter_map(|obj| match obj {
@@ -271,6 +283,14 @@ impl GameObjectManager {
             Some(ball.get_friendly_name())
         } else {
             None
+        }
+    }
+    
+    pub fn get_ball_speed(&self, object_id: u32) -> Result<f64, String> {
+        if let Some(GameObject::Ball(ball)) = self.objects.get(&object_id) {
+            Ok(ball.speed)
+        } else {
+            Err("Object is not a ball or does not exist".to_string())
         }
     }
 }

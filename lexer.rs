@@ -18,6 +18,7 @@ pub enum TokenType {
     Set,        // for "set direction" command
     Direction,  // for "direction" keyword
     Color,      // New: for "color" keyword
+    Speed,      // New: for "speed" keyword
     Play,       // New: for "play" command
     Pause,      // Add this missing token
     Stop,       // New: for "stop" command
@@ -308,6 +309,7 @@ impl Lexer {
             "set" => TokenType::Set,
             "direction" => TokenType::Direction,
             "color" => TokenType::Color,
+            "speed" => TokenType::Speed,
             "play" | "bang" => TokenType::Play,
             "pause" => TokenType::Pause,
             "stop" => TokenType::Stop,

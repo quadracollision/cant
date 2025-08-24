@@ -254,6 +254,9 @@ impl Interpreter {
             Stmt::SetColor { object_name, color } => {
                 self.execute_set_color(object_name, color)
             },
+            Stmt::SetSpeed { object_name, speed } => {
+                self.execute_set_speed(object_name, speed)
+            },
             Stmt::Label { object_name, arguments, text } => {
                 self.execute_label(object_name, arguments, text)
             },
@@ -551,6 +554,30 @@ impl Interpreter {
             "grid" => return self.call_grid_function(arguments),
             "tilesize" => return self.call_tilesize_function(arguments),
             "sample" => return self.call_sample_function(arguments),
+            "speed" => {
+                if arguments.len() != 1 {
+                    return Err(InterpreterError::RuntimeError("speed expects exactly 1 argument".to_string()));
+                }
+                
+                let object_name = match &arguments[0] {
+                    Expr::Identifier(name) => name.clone(),
+                    _ => {
+                        let target_value = self.evaluate_expression(&arguments[0])?;
+                        match target_value {
+                            Value::String(ball_name) => ball_name,
+                            _ => return Err(InterpreterError::TypeError("speed() expects a ball name as identifier".to_string())),
+                        }
+                    }
+                };
+                
+                let object_id = self.game_objects.find_object_by_name(&object_name)
+                    .ok_or_else(|| InterpreterError::RuntimeError(format!("Object '{}' not found", object_name)))?;
+                
+                let current_speed = self.game_objects.get_ball_speed(object_id)
+                    .map_err(|e| InterpreterError::RuntimeError(e))?;
+                
+                return Ok(Value::Number(current_speed));
+            },
             "clear" => {
                 self.grid_state = None;
                 return Ok(Value::String("Grid cleared".to_string()));
@@ -960,6 +987,55 @@ Controls:
     };
     
     Ok(Value::String(format!("Set color of {} to {:?}", target_name, color)))
+}
+
+fn execute_set_speed(&mut self, object_name: &str, speed_mod: &SpeedModification) -> Result<Value, InterpreterError> {
+    let object_id = if object_name == "cursor" {
+        // Find object at cursor position
+        let object_names_at_cursor = self.game_objects.find_objects_at_grid_with_names(self.cursor_x, self.cursor_y);
+        if object_names_at_cursor.is_empty() {
+            return Err(InterpreterError::RuntimeError("No object found at cursor position".to_string()));
+        }
+        // Use the first object found at cursor position and get its ID
+        let first_object_name = &object_names_at_cursor[0];
+        self.game_objects.find_object_by_name(first_object_name)
+            .ok_or_else(|| InterpreterError::RuntimeError(format!("Object '{}' not found", first_object_name)))?
+    } else {
+        // Find the object by name
+        self.game_objects.find_object_by_name(object_name)
+            .ok_or_else(|| InterpreterError::RuntimeError(format!("Object '{}' not found", object_name)))?
+    };
+    
+    let final_speed = match speed_mod {
+        SpeedModification::Absolute(speed) => *speed,
+        SpeedModification::Relative(delta) => {
+            let current_speed = self.game_objects.get_ball_speed(object_id)
+                .map_err(|e| InterpreterError::RuntimeError(e))?;
+            (current_speed + delta).max(0.0) // Ensure speed doesn't go negative
+        }
+    };
+    
+    self.game_objects.set_ball_speed(object_id, final_speed)
+        .map_err(|e| InterpreterError::RuntimeError(e))?;
+    
+    let target_name = if object_name == "cursor" {
+        format!("object at cursor position")
+    } else {
+        object_name.to_string()
+    };
+    
+    let operation_desc = match speed_mod {
+        SpeedModification::Absolute(speed) => format!("Set speed of {} to {}", target_name, speed),
+        SpeedModification::Relative(delta) => {
+            if *delta >= 0.0 {
+                format!("Increased speed of {} by {} (new speed: {})", target_name, delta, final_speed)
+            } else {
+                format!("Decreased speed of {} by {} (new speed: {})", target_name, delta.abs(), final_speed)
+            }
+        }
+    };
+    
+    Ok(Value::String(operation_desc))
 }
 
 fn execute_label(&mut self, object_name: &str, arguments: &[Expr], text: &str) -> Result<Value, InterpreterError> {
