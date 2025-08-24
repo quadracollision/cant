@@ -254,6 +254,9 @@ impl Interpreter {
             Stmt::SetColor { object_name, color } => {
                 self.execute_set_color(object_name, color)
             },
+            Stmt::Label { object_name, arguments, text } => {
+                self.execute_label(object_name, arguments, text)
+            },
             Stmt::Play => self.execute_play(),
             Stmt::Pause => self.execute_pause(),
             Stmt::Stop => self.execute_stop(),
@@ -958,4 +961,62 @@ Controls:
     
     Ok(Value::String(format!("Set color of {} to {:?}", target_name, color)))
 }
-} // Add this closing brace for the impl Interpreter block
+
+fn execute_label(&mut self, object_name: &str, arguments: &[Expr], text: &str) -> Result<Value, InterpreterError> {
+    let object_id = if object_name == "cursor" {
+        // Find object at cursor position using find_object_at with tolerance
+        self.game_objects.find_object_at(self.cursor_x as f64, self.cursor_y as f64, 0.5)
+    } else if object_name == "square" {
+        // Handle square(x, y) or square(id) syntax
+        if arguments.len() == 2 {
+            // square(x, y) - find square at position
+            let x = self.evaluate_expression(&arguments[0])?.as_number()
+                .ok_or_else(|| InterpreterError::TypeError("Expected number for x coordinate".to_string()))?;
+            let y = self.evaluate_expression(&arguments[1])?.as_number()
+                .ok_or_else(|| InterpreterError::TypeError("Expected number for y coordinate".to_string()))?;
+            
+            // Find object at position and check if it's a square
+            if let Some(id) = self.game_objects.find_object_at(x, y, 0.5) {
+                if let Some(GameObject::Square(_)) = self.game_objects.get_object(id) {
+                    Some(id)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else if arguments.len() == 1 {
+            // square(id) - find square by sequence number, but we need to convert to friendly name
+            let sequence_id = self.evaluate_expression(&arguments[0])?.as_number()
+                .ok_or_else(|| InterpreterError::TypeError("Expected number for square ID".to_string()))?;
+            
+            // Convert sequence number to friendly name and find by name
+            let friendly_name = format!("square{}", sequence_id as u32);
+            self.game_objects.find_object_by_name(&friendly_name)
+        } else {
+            return Err(InterpreterError::RuntimeError(
+                "Label square requires 1 or 2 arguments".to_string()
+            ));
+        }
+    } else {
+        // Handle direct object names like "square1", "ball2", etc.
+        self.game_objects.find_object_by_name(object_name)
+    };
+    
+    if let Some(id) = object_id {
+        if let Some(square) = self.game_objects.get_square_mut(id) {
+            square.set_label(text.to_string());
+            Ok(Value::String(format!("Labeled square with: {}", text)))
+        } else {
+            Err(InterpreterError::RuntimeError(
+                "Object is not a square".to_string()
+            ))
+        }
+    } else {
+        Err(InterpreterError::RuntimeError(
+            "No square found with that name".to_string()
+        ))
+    }
+}
+
+}

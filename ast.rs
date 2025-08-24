@@ -80,6 +80,11 @@ pub enum Stmt {
         object_name: String,
         color: ColorValue,
     },
+    Label {
+        object_name: String,
+        arguments: Vec<Expr>,
+        text: String,
+    },
     Play,   // New: simple play command
     Pause,  // New: pause command
     Stop,   // New: stop command to restore pre-play state

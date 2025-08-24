@@ -150,6 +150,11 @@ impl GraphicsRenderer {
                     let size = dynamic_tile_size;
                     let color = Self::color_name_to_rgba(square.get_color());
                     Self::draw_square_static(frame, screen_x, screen_y, size, color, width, height);
+                    
+                    // Draw label text if the square has one
+                    if let Some(label_text) = square.get_label() {
+                        draw_text_on_square(frame, screen_x, screen_y, label_text, width, height, size);
+                    }
                 }
             }
         }
@@ -442,6 +447,42 @@ impl GraphicsRenderer {
             let text_y = console_start_y as usize + padding as usize + (i * line_height);
             if text_y + 12 < height as usize {
                 font::draw_text(frame, line, start_x, text_y, text_color, false, width as usize);
+            }
+        }
+    }
+}
+
+fn draw_text_on_square(frame: &mut [u8], x: u32, y: u32, text: &str, width: u32, height: u32, tile_size: u32) {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let char_width = 8;  // Font character width
+    let char_height = 12; // Font character height
+    let line_spacing = 14; // 12px font + 2px spacing
+    let text_color = [255, 255, 255]; // White text
+    
+    for (line_idx, line) in lines.iter().enumerate() {
+        let line_y = y + (line_idx as u32 * line_spacing as u32);
+        let line_x = x + 2; // Small padding from square edge
+        
+        // Ensure text fits within the square bounds
+        if line_y + char_height as u32 <= y + tile_size && line_x + (line.len() as u32 * char_width as u32) <= x + tile_size {
+            font::draw_text(frame, line, line_x as usize, line_y as usize, text_color, false, width as usize);
+        }
+    }
+}
+
+// Remove the draw_simple_char function as it's no longer needed
+fn draw_simple_char(frame: &mut [u8], x: u32, y: u32, ch: char, color: [u8; 4], width: u32, height: u32) {
+    // Very basic character rendering - you can improve this
+    // For now, just draw a small rectangle for each character
+    for dy in 0..3 {
+        for dx in 0..2 {
+            let px = x + dx;
+            let py = y + dy;
+            if px < width && py < height {
+                let index = ((py * width + px) * 4) as usize;
+                if index + 3 < frame.len() {
+                    frame[index..index + 4].copy_from_slice(&color);
+                }
             }
         }
     }

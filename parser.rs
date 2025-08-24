@@ -54,6 +54,8 @@ impl Parser {
             self.clear_statement()
         } else if self.match_token(&TokenType::Destroy) {  // Add this
             self.destroy_statement()
+        } else if self.match_token(&TokenType::Label) {  // Add this
+            self.label_statement()
         } else if self.match_token(&TokenType::LeftBrace) {
             Ok(Stmt::Block(self.block()?))
         } else {
@@ -614,6 +616,107 @@ impl Parser {
                 message: "Expected 'balls' or 'squares' after 'clear'".to_string(),
             })
         }
+    }
+    
+    fn label_statement(&mut self) -> Result<Stmt, ParseError> {
+        // Parse object type or object name
+        let object_identifier = match &self.peek().token_type {
+            TokenType::Identifier(name) => {
+                let name = name.clone();
+                self.advance();
+                name
+            },
+            TokenType::Cursor => {
+                self.advance();
+                "cursor".to_string()
+            },
+            _ => return Err(ParseError::Expected {
+                expected: "object identifier".to_string(),
+                found: self.peek().clone(),
+                message: "Expected object identifier after 'label'".to_string(),
+            }),
+        };
+        
+        // Check if we have parentheses (function-style syntax) or direct object name
+        let (object_name, arguments) = if self.check(&TokenType::LeftParen) {
+            // Function-style syntax: label square(1) text or label square(cursor) text
+            self.advance(); // consume '('
+            let mut args = Vec::new();
+            
+            if !self.check(&TokenType::RightParen) {
+                loop {
+                    args.push(self.expression()?);
+                    if !self.match_token(&TokenType::Comma) {
+                        break;
+                    }
+                }
+            }
+            
+            self.consume(&TokenType::RightParen, "Expected ')' after arguments")?;
+            (object_identifier, args)
+        } else {
+            // Handle direct cursor usage: "label cursor hello"
+            if object_identifier == "cursor" {
+                ("cursor".to_string(), Vec::new())
+            } else if object_identifier.starts_with("square") {
+                // Direct object name syntax: label square1 text
+                // Treat the identifier as an object name with ID extracted from it
+                // Extract ID from square name (e.g., "square1" -> ID 1)
+                let id_str = &object_identifier[6..]; // Remove "square" prefix
+                if let Ok(id) = id_str.parse::<f64>() {
+                    ("square".to_string(), vec![Expr::Number(id)])
+                } else {
+                    return Err(ParseError::Expected {
+                        expected: "valid square ID".to_string(),
+                        found: self.peek().clone(),
+                        message: format!("Invalid square identifier: {}", object_identifier),
+                    });
+                }
+            } else {
+                return Err(ParseError::Expected {
+                    expected: "square identifier or cursor".to_string(),
+                    found: self.peek().clone(),
+                    message: "Only square objects and cursor are supported for labeling".to_string(),
+                });
+            }
+        };
+        
+        // Parse the text to label
+        let text = match &self.peek().token_type {
+            TokenType::Identifier(text) | TokenType::String(text) => {
+                let text = text.clone();
+                self.advance();
+                text
+            },
+            // Accept color tokens as valid text for labels
+            TokenType::Red => { self.advance(); "red".to_string() },
+            TokenType::Blue => { self.advance(); "blue".to_string() },
+            TokenType::Green => { self.advance(); "green".to_string() },
+            TokenType::Yellow => { self.advance(); "yellow".to_string() },
+            TokenType::Orange => { self.advance(); "orange".to_string() },
+            TokenType::Purple => { self.advance(); "purple".to_string() },
+            TokenType::Pink => { self.advance(); "pink".to_string() },
+            TokenType::Cyan => { self.advance(); "cyan".to_string() },
+            TokenType::Magenta => { self.advance(); "magenta".to_string() },
+            TokenType::White => { self.advance(); "white".to_string() },
+            TokenType::Black => { self.advance(); "black".to_string() },
+            TokenType::Gray => { self.advance(); "gray".to_string() },
+            TokenType::Brown => { self.advance(); "brown".to_string() },
+            TokenType::Lime => { self.advance(); "lime".to_string() },
+            _ => return Err(ParseError::Expected {
+                expected: "text".to_string(),
+                found: self.peek().clone(),
+                message: "Expected text after label arguments".to_string(),
+            }),
+        };
+        
+        self.consume_newline_or_semicolon()?;
+        
+        Ok(Stmt::Label {
+            object_name,
+            arguments,
+            text,
+        })
     }
 }
 

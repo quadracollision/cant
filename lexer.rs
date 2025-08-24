@@ -23,6 +23,7 @@ pub enum TokenType {
     Stop,       // New: for "stop" command
     Clear,      // New: for "clear" command
     Destroy,    // New: for "destroy" command
+    Label,      // New: for "label" command
     Balls,      // New: for "balls" keyword
     Squares,    // New: for "squares" keyword
     Cursor,     // New: for "cursor" keyword
@@ -307,11 +308,12 @@ impl Lexer {
             "set" => TokenType::Set,
             "direction" => TokenType::Direction,
             "color" => TokenType::Color,
-            "play" => TokenType::Play,
+            "play" | "bang" => TokenType::Play,
             "pause" => TokenType::Pause,
             "stop" => TokenType::Stop,
             "clear" => TokenType::Clear,
             "destroy" => TokenType::Destroy,
+            "label" => TokenType::Label,
             "balls" => TokenType::Balls,
             "squares" => TokenType::Squares,
             "cursor" => TokenType::Cursor,

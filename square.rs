@@ -13,6 +13,7 @@ pub struct Square {
     pub y: f64,
     pub script: Option<String>, // script to execute when collided with
     pub color: String, // New: store the color as a string
+    pub label: Option<String>, // New: store label text
 }
 
 impl Square {
@@ -26,6 +27,7 @@ impl Square {
             y,
             script: None,
             color: "white".to_string(), // Default color
+            label: None, // No label by default
         }
     }
     
@@ -48,5 +50,31 @@ impl Square {
     
     pub fn get_color(&self) -> &str {
         &self.color
+    }
+    
+    pub fn set_label(&mut self, text: String) {
+        // Format text for 3 lines, max 5 chars per line
+        let formatted = self.format_label_text(text);
+        self.label = Some(formatted);
+    }
+    
+    pub fn get_label(&self) -> Option<&str> {
+        self.label.as_deref()
+    }
+    
+    fn format_label_text(&self, text: String) -> String {
+        let chars: Vec<char> = text.chars().take(15).collect(); // Max 15 characters
+        let mut lines = Vec::new();
+        
+        for chunk in chars.chunks(5) {
+            lines.push(chunk.iter().collect::<String>());
+        }
+        
+        // Pad to 3 lines
+        while lines.len() < 3 {
+            lines.push(String::new());
+        }
+        
+        lines.join("\n")
     }
 }
