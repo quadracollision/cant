@@ -134,7 +134,7 @@ impl GameObjectManager {
     
     pub fn find_objects_at_grid_with_names(&self, grid_x: u32, grid_y: u32) -> Vec<String> {
         let mut object_names = Vec::new();
-        let tolerance = 0.5;
+        let tolerance = 0.6;  // Increased from 0.1 to 0.6 to detect balls at cell centers
         
         for (_id, obj) in &self.objects {
             match obj {

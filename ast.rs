@@ -5,6 +5,7 @@ pub enum Expr {
     Number(f64),
     String(String),
     Identifier(String),
+    Self_,  // New: for "self" keyword
     Binary {
         left: Box<Expr>,
         operator: BinaryOp,
@@ -41,6 +42,7 @@ pub enum BinaryOp {
     Greater,
     LessEqual,
     GreaterEqual,
+    Hits,  // New: for "ball1 hits self X" syntax
 }
 
 #[derive(Debug, Clone)]
@@ -95,14 +97,22 @@ pub enum Stmt {
         arguments: Vec<Expr>,
         text: String,
     },
+    Script {
+        object_name: String,
+        arguments: Vec<Expr>,
+    },
     Play,   // New: simple play command
     Pause,  // New: pause command
     Stop,   // New: stop command to restore pre-play state
+    Verbose, // New: verbose command to toggle debug output
     ClearBalls,   // New: clear all balls command
     ClearSquares, // New: clear all squares command
     Destroy {     // New: destroy command
         object_type: String,
         arguments: Vec<Expr>,
+    },
+    Run {         // New: run script file command
+        script_name: String,
     },
 }
 
@@ -155,6 +165,7 @@ impl fmt::Display for Expr {
             Expr::Number(n) => write!(f, "{}", n),
             Expr::String(s) => write!(f, "\"{}\"", s),
             Expr::Identifier(name) => write!(f, "{}", name),
+            Expr::Self_ => write!(f, "self"),
             Expr::Binary { left, operator, right } => {
                 write!(f, "({} {:?} {})", left, operator, right)
             },

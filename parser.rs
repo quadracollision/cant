@@ -44,20 +44,26 @@ impl Parser {
             self.return_statement()
         } else if self.match_token(&TokenType::Set) {
             self.set_statement()
+        } else if self.match_token(&TokenType::Create) {
+            self.create_statement()
+        } else if self.match_token(&TokenType::Destroy) {
+            self.destroy_statement()
+        } else if self.match_token(&TokenType::Clear) {
+            self.clear_statement()
+        } else if self.match_token(&TokenType::Label) {
+            self.label_statement()
         } else if self.match_token(&TokenType::Play) {
             self.play_statement()
         } else if self.match_token(&TokenType::Pause) {
             self.pause_statement()
         } else if self.match_token(&TokenType::Stop) {
             self.stop_statement()
-        } else if self.match_token(&TokenType::Clear) {
-            self.clear_statement()
-        } else if self.match_token(&TokenType::Destroy) {  // Add this
-            self.destroy_statement()
-        } else if self.match_token(&TokenType::Label) {  // Add this
-            self.label_statement()
-        } else if self.match_token(&TokenType::LeftBrace) {
-            Ok(Stmt::Block(self.block()?))
+        } else if self.match_token(&TokenType::Verbose) {
+            self.verbose_statement()
+        } else if self.match_token(&TokenType::Script) {
+            self.script_statement()
+        } else if self.match_token(&TokenType::Run) {
+            self.run_statement()
         } else {
             self.expression_statement()
         }
@@ -270,13 +276,13 @@ impl Parser {
     }
 
     fn if_statement(&mut self) -> Result<Stmt, ParseError> {
-        self.consume(&TokenType::LeftParen, "Expected '(' after 'if'")?;
-        let condition = self.expression()?;
-        self.consume(&TokenType::RightParen, "Expected ')' after if condition")?;
+        let condition = self.expression()?; // No parentheses required
         
-        let then_branch = Box::new(self.statement()?);
+        // Parse statements until next block initiator or EOF
+        let then_branch = Box::new(Stmt::Block(self.parse_implicit_block()?));
+        
         let else_branch = if self.match_token(&TokenType::Else) {
-            Some(Box::new(self.statement()?))
+            Some(Box::new(Stmt::Block(self.parse_implicit_block()?)))
         } else {
             None
         };
@@ -293,6 +299,64 @@ impl Parser {
         Ok(Stmt::While { condition, body })
     }
 
+    fn script_statement(&mut self) -> Result<Stmt, ParseError> {
+        // Parse object name in parentheses: script(object_name)
+        self.consume(&TokenType::LeftParen, "Expected '(' after 'script'")?;
+        
+        let mut object_name = match &self.peek().token_type {
+            TokenType::Identifier(name) => {
+                let name = name.clone();
+                self.advance();
+                name
+            },
+            TokenType::Cursor => {
+                self.advance();
+                "cursor".to_string()
+            },
+            _ => return Err(ParseError::Expected {
+                expected: "object name or 'cursor'".to_string(),
+                found: self.peek().clone(),
+                message: "Expected object name or 'cursor' after 'script('".to_string(),
+            }),
+        };
+        
+        // Handle dotted identifiers like lib.script_0
+        while self.match_token(&TokenType::Dot) {
+            if let TokenType::Identifier(name) = &self.peek().token_type {
+                object_name.push('.');
+                object_name.push_str(name);
+                self.advance();
+            } else {
+                return Err(ParseError::Expected {
+                    expected: "identifier after dot".to_string(),
+                    found: self.peek().clone(),
+                    message: "Expected identifier after '.' in dotted name".to_string(),
+                });
+            }
+        }
+        
+        // Parse optional arguments (for future extensibility)
+        let mut arguments = Vec::new();
+        if self.match_token(&TokenType::Comma) {
+            if !self.check(&TokenType::RightParen) {
+                loop {
+                    arguments.push(self.expression()?);
+                    if !self.match_token(&TokenType::Comma) {
+                        break;
+                    }
+                }
+            }
+        }
+        
+        self.consume(&TokenType::RightParen, "Expected ')' after script arguments")?;
+        self.consume_newline_or_semicolon()?;
+        
+        Ok(Stmt::Script {
+            object_name,
+            arguments,
+        })
+    }
+
     fn function_statement(&mut self) -> Result<Stmt, ParseError> {
         let name = if let TokenType::Identifier(name) = &self.peek().token_type {
             let name = name.clone();
@@ -301,7 +365,7 @@ impl Parser {
         } else {
             return Err(ParseError::ExpectedIdentifier(self.peek().line, self.peek().column));
         };
-
+    
         self.consume(&TokenType::LeftParen, "Expected '(' after function name")?;
         
         let mut parameters = Vec::new();
@@ -321,9 +385,10 @@ impl Parser {
         }
         
         self.consume(&TokenType::RightParen, "Expected ')' after parameters")?;
-        self.consume(&TokenType::LeftBrace, "Expected '{' before function body")?;
+        self.consume_newline_or_semicolon()?; // Instead of expecting '{'
         
-        let body = Box::new(Stmt::Block(self.block()?));
+        // Parse statements until next function/if or EOF
+        let body = Box::new(Stmt::Block(self.parse_implicit_block()?));
         
         Ok(Stmt::Function { name, parameters, body })
     }
@@ -412,12 +477,13 @@ impl Parser {
     fn comparison(&mut self) -> Result<Expr, ParseError> {
         let mut expr = self.term()?;
         
-        while self.match_tokens(&[TokenType::Greater, TokenType::GreaterEqual, TokenType::Less, TokenType::LessEqual]) {
+        while self.match_tokens(&[TokenType::Greater, TokenType::GreaterEqual, TokenType::Less, TokenType::LessEqual, TokenType::Hits]) {
             let operator = match self.previous().token_type {
                 TokenType::Greater => BinaryOp::Greater,
                 TokenType::GreaterEqual => BinaryOp::GreaterEqual,
                 TokenType::Less => BinaryOp::Less,
                 TokenType::LessEqual => BinaryOp::LessEqual,
+                TokenType::Hits => BinaryOp::Hits,
                 _ => unreachable!(),
             };
             let right = self.term()?;
@@ -516,64 +582,28 @@ impl Parser {
 
     fn primary(&mut self) -> Result<Expr, ParseError> {
         match &self.peek().token_type {
+            TokenType::Number(n) => {
+                let value = *n;
+                self.advance();
+                Ok(Expr::Number(value))
+            },
+            TokenType::String(s) => {
+                let value = s.clone();
+                self.advance();
+                Ok(Expr::String(value))
+            },
             TokenType::Identifier(name) => {
-                // Check for special 'create' syntax
-                if name == "create" {
-                    self.advance(); // consume 'create'
-                    
-                    // Expect object type identifier
-                    if let TokenType::Identifier(object_type) = &self.peek().token_type {
-                        let object_type = object_type.clone();
-                        self.advance(); // consume object type
-                        
-                        // Check for optional parentheses
-                        let arguments = if self.check(&TokenType::LeftParen) {
-                            self.advance(); // consume '('
-                            let mut args = Vec::new();
-                            
-                            if !self.check(&TokenType::RightParen) {
-                                loop {
-                                    args.push(self.expression()?);
-                                    if !self.match_token(&TokenType::Comma) {
-                                        break;
-                                    }
-                                }
-                            }
-                            
-                            self.consume(&TokenType::RightParen, "Expected ')' after arguments")?;
-                            args
-                        } else {
-                            Vec::new() // No parentheses = no arguments
-                        };
-                        
-                        return Ok(Expr::CreateCall { object_type, arguments });
-                    } else {
-                        return Err(ParseError::Expected {
-                            expected: "object type".to_string(),
-                            found: self.peek().clone(),
-                            message: "Expected object type after 'create'".to_string(),
-                        });
-                    }
-                }
-                
-                // Regular identifier
                 let name = name.clone();
                 self.advance();
                 Ok(Expr::Identifier(name))
             },
+            TokenType::Self_ => {
+                self.advance();
+                Ok(Expr::Self_)
+            },
             TokenType::Cursor => {
                 self.advance();
                 Ok(Expr::Identifier("cursor".to_string()))
-            },
-            TokenType::Number(n) => {
-                let n = *n;
-                self.advance();
-                Ok(Expr::Number(n))
-            },
-            TokenType::String(s) => {
-                let s = s.clone();
-                self.advance();
-                Ok(Expr::String(s))
             },
             TokenType::LeftParen => {
                 self.advance();
@@ -688,7 +718,7 @@ impl Parser {
             })
         }
     }
-    
+
     fn label_statement(&mut self) -> Result<Stmt, ParseError> {
         // Parse object type or object name
         let object_identifier = match &self.peek().token_type {
@@ -788,6 +818,87 @@ impl Parser {
             arguments,
             text,
         })
+    }
+
+    fn create_statement(&mut self) -> Result<Stmt, ParseError> {
+        // Parse object type (ball, square, etc.)
+        let object_type = match &self.peek().token_type {
+            TokenType::Identifier(name) => {
+                let name = name.clone();
+                self.advance();
+                name
+            },
+            _ => return Err(ParseError::Expected {
+                expected: "object type".to_string(),
+                found: self.peek().clone(),
+                message: "Expected object type after 'create'".to_string(),
+            }),
+        };
+        
+        // Parse arguments in parentheses
+        self.consume(&TokenType::LeftParen, "Expected '(' after object type")?;
+        let mut arguments = Vec::new();
+        
+        if !self.check(&TokenType::RightParen) {
+            loop {
+                arguments.push(self.expression()?);
+                if !self.match_token(&TokenType::Comma) {
+                    break;
+                }
+            }
+        }
+        
+        self.consume(&TokenType::RightParen, "Expected ')' after arguments")?;
+        self.consume_newline_or_semicolon()?;
+        
+        Ok(Stmt::Expression(Expr::CreateCall {
+            object_type,
+            arguments,
+        }))
+    }
+
+    fn verbose_statement(&mut self) -> Result<Stmt, ParseError> {
+        Ok(Stmt::Verbose)
+    }
+    
+    fn run_statement(&mut self) -> Result<Stmt, ParseError> {
+        let script_name = if let TokenType::Identifier(name) = &self.peek().token_type {
+            let name = name.clone();
+            self.advance();
+            name
+        } else {
+            return Err(ParseError::Expected {
+                expected: "script name".to_string(),
+                found: self.peek().clone(),
+                message: "Expected script name after 'run'".to_string(),
+            });
+        };
+        
+        self.consume_newline_or_semicolon()?;
+        Ok(Stmt::Run { script_name })
+    }
+
+    fn parse_implicit_block(&mut self) -> Result<Vec<Stmt>, ParseError> {
+        let mut statements = Vec::new();
+        
+        while !self.is_at_end() && !self.is_block_initiator() {
+            if self.check(&TokenType::Newline) {
+                self.advance();
+                continue;
+            }
+            statements.push(self.statement()?);
+        }
+        
+        Ok(statements)
+    }
+
+    fn is_block_initiator(&self) -> bool {
+        matches!(self.peek().token_type, 
+            TokenType::Function | 
+            TokenType::If | 
+            TokenType::While |
+            TokenType::Else
+        )
     }
 }
 

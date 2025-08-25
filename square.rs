@@ -1,4 +1,5 @@
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::collections::HashMap;
 
 // Start square IDs from 2000 to avoid conflicts with balls
 static NEXT_SQUARE_ID: AtomicU32 = AtomicU32::new(2000);
@@ -8,12 +9,13 @@ static SQUARE_SEQUENCE: AtomicU32 = AtomicU32::new(1);
 #[derive(Debug, Clone)]
 pub struct Square {
     pub id: u32,
-    pub sequence_number: u32, // For friendly naming like "square1", "square2"
+    pub sequence_number: u32,
     pub x: f64,
     pub y: f64,
-    pub script: Option<String>, // script to execute when collided with
-    pub color: String, // New: store the color as a string
-    pub label: Option<String>, // New: store label text
+    pub script: Option<String>,
+    pub color: String,
+    pub label: Option<String>,
+    pub hit_counts: HashMap<u32, u32>, // object_id -> hit_count
 }
 
 impl Square {
@@ -26,9 +28,30 @@ impl Square {
             x,
             y,
             script: None,
-            color: "white".to_string(), // Default color
-            label: None, // No label by default
+            color: "white".to_string(),
+            label: None,
+            hit_counts: HashMap::new(),
         }
+    }
+    
+    pub fn record_hit(&mut self, object_id: u32) {
+        *self.hit_counts.entry(object_id).or_insert(0) += 1;
+    }
+    
+    pub fn get_hit_count(&self, object_id: u32) -> u32 {
+        self.hit_counts.get(&object_id).copied().unwrap_or(0)
+    }
+    
+    pub fn get_total_hits(&self) -> u32 {
+        self.hit_counts.values().sum()
+    }
+    
+    pub fn set_script(&mut self, script: String) {
+        self.script = Some(script);
+    }
+    
+    pub fn get_script(&self) -> Option<&str> {
+        self.script.as_deref()
     }
     
     pub fn get_friendly_name(&self) -> String {

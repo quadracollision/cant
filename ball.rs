@@ -1,4 +1,5 @@
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::collections::HashMap;
 
 // Start ball IDs from 1000 to avoid conflicts with squares
 static NEXT_BALL_ID: AtomicU32 = AtomicU32::new(1000);
@@ -19,6 +20,7 @@ pub struct Ball {
     pub audio_file: Option<String>, // path to audio file
     pub audio_volume: f32, // volume level (0.0 to 1.0)
     pub color: String, // New: store the color as a string
+    pub hit_counts: HashMap<u32, u32>, // object_id -> hit_count
 }
 
 // Add to existing Ball implementation
@@ -39,7 +41,20 @@ impl Ball {
             audio_file: None,
             audio_volume: 1.0,
             color: "white".to_string(), // Default color
+            hit_counts: HashMap::new(),
         }
+    }
+    
+    pub fn record_hit(&mut self, object_id: u32) {
+        *self.hit_counts.entry(object_id).or_insert(0) += 1;
+    }
+    
+    pub fn get_hit_count(&self, object_id: u32) -> u32 {
+        self.hit_counts.get(&object_id).copied().unwrap_or(0)
+    }
+    
+    pub fn get_total_hits(&self) -> u32 {
+        self.hit_counts.values().sum()
     }
     
     pub fn get_friendly_name(&self) -> String {

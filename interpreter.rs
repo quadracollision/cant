@@ -1,12 +1,16 @@
 use std::collections::HashMap;
 use thiserror::Error;
 use crate::grid::GridState;
-use crate::lexer::{Lexer, LexerError};
+use crate::lexer::{Lexer, LexerError, Token, TokenType};
 use crate::parser::{Parser, ParseError};
 use crate::ast::*;
 use crate::game_objects::{GameObjectManager, GameObject};
-use crate::physics_engine::PhysicsEngine;
+use crate::physics_engine::{PhysicsEngine, CollisionInfo, CollisionType};
 use crate::game_state::GameStateManager;
+use crate::console::Console;
+use crate::script_editor::ScriptEditor;
+use crate::ball::Ball;
+use crate::square::Square;
 
 #[derive(Error, Debug)]
 pub enum InterpreterError {
@@ -66,6 +70,8 @@ impl Value {
             _ => None,
         }
     }
+
+
 }
 
 pub struct Interpreter {
@@ -77,6 +83,13 @@ pub struct Interpreter {
     physics_engine: PhysicsEngine,
     cursor_x: u32,
     cursor_y: u32,
+    script_editor: Option<ScriptEditor>,
+    current_script_owner: Option<u32>,
+    verbose_mode: bool,
+    graphics_update_needed: bool,
+    // Add in-memory script storage
+    memory_scripts: HashMap<String, String>, // script_name -> script_content
+    next_script_id: u32, // Add script ID counter to interpreter too
 }
 
 impl Interpreter {
@@ -87,12 +100,34 @@ impl Interpreter {
             environment: HashMap::new(),
             game_objects: GameObjectManager::new(),
             game_state_manager: GameStateManager::new(),
-            physics_engine: PhysicsEngine::new(1.0, 1.0, 1.0),
+            physics_engine: PhysicsEngine::new(10.0, 10.0, 50.0), // Default grid: 10x10 with 50px tiles
             cursor_x: 0,
             cursor_y: 0,
+            script_editor: None,
+            current_script_owner: None,
+            verbose_mode: false,
+            graphics_update_needed: false,
+            memory_scripts: HashMap::new(),
+            next_script_id: 1,
         };
         interpreter.register_builtins();
         interpreter
+    }
+
+    fn list_memory_scripts(&self) -> Vec<String> {
+        self.memory_scripts.keys().cloned().collect()
+    }
+
+    fn get_script_from_memory(&self, script_name: &str) -> Option<&String> {
+        self.memory_scripts.get(script_name)
+    }
+
+    pub fn save_script_to_memory(&mut self, script_name: String, content: String) {
+        self.memory_scripts.insert(script_name, content);
+    }
+
+    pub fn remove_script_from_memory(&mut self, script_name: &str) -> Option<String> {
+        self.memory_scripts.remove(script_name)
     }
 
     // Update the execute_play method
@@ -156,12 +191,51 @@ impl Interpreter {
     pub fn update_physics(&mut self, dt: f64) {
         if self.is_playing() {
             let squares = self.game_objects.get_all_squares();
+            let mut all_collisions = Vec::new();
             
             for ball_id in self.game_objects.get_all_ball_ids() {
                 if let Some(ball) = self.game_objects.get_ball_mut(ball_id) {
-                    self.physics_engine.update_ball(ball, dt, &squares);
+                    let collisions = self.physics_engine.update_ball(ball, dt, &squares);
+                    all_collisions.extend(collisions);
                 }
             }
+            
+            // Process physics collisions
+            for collision in all_collisions {
+                match collision.collision_type {
+                    CollisionType::Wall => {
+                        // Record wall hit for the ball
+                        if let Some(ball) = self.game_objects.get_ball_mut(collision.ball_id) {
+                            ball.record_hit(0); // Use 0 or special ID for walls
+                        }
+                        
+                        if self.verbose_mode {
+                            println!("{}: wall collision", 
+                                self.game_objects.get_ball_name(collision.ball_id).unwrap_or("unknown".to_string()));
+                        }
+                    },
+                    CollisionType::Square => {
+                        if let Some(square_id) = collision.other_object_id {
+                            // Record hits for both objects
+                            if let Some(ball) = self.game_objects.get_ball_mut(collision.ball_id) {
+                                ball.record_hit(square_id);
+                            }
+                            if let Some(square) = self.game_objects.get_square_mut(square_id) {
+                                square.record_hit(collision.ball_id);
+                            }
+                            
+                            if self.verbose_mode {
+                                self.print_collision_info(collision.ball_id, square_id);
+                            }
+                            
+                            self.execute_collision_script(collision.ball_id, square_id);
+                        }
+                    }
+                }
+            }
+            
+            // Keep the existing collision detection as backup
+            self.handle_collisions();
         }
     }
 
@@ -260,14 +334,19 @@ impl Interpreter {
             Stmt::Label { object_name, arguments, text } => {
                 self.execute_label(object_name, arguments, text)
             },
+            Stmt::Script { object_name, arguments } => {
+                self.execute_script_command(object_name, arguments)
+            },
             Stmt::Play => self.execute_play(),
             Stmt::Pause => self.execute_pause(),
             Stmt::Stop => self.execute_stop(),
+            Stmt::Verbose => self.execute_verbose(),
             Stmt::ClearBalls => self.execute_clear_balls(),
             Stmt::ClearSquares => self.execute_clear_squares(),
             Stmt::Destroy { object_type, arguments } => {  // Add this
                 self.execute_destroy(object_type, arguments)
             },
+            Stmt::Run { script_name } => self.execute_run_command(script_name),
         }
     }
 
@@ -338,6 +417,13 @@ impl Interpreter {
         match expr {
             Expr::Number(n) => Ok(Value::Number(*n)),
             Expr::String(s) => Ok(Value::String(s.clone())),
+            Expr::Self_ => {
+                if let Some(owner_id) = self.current_script_owner {
+                    Ok(Value::GameObject(owner_id))
+                } else {
+                    Err(InterpreterError::RuntimeError("'self' can only be used within object scripts".to_string()))
+                }
+            },
             Expr::Identifier(name) => {
                 // Handle special cursor identifier
                 if name == "cursor" {
@@ -499,6 +585,7 @@ impl Interpreter {
                     BinaryOp::Greater => Ok(Value::Boolean(l > r)),
                     BinaryOp::LessEqual => Ok(Value::Boolean(l <= r)),
                     BinaryOp::GreaterEqual => Ok(Value::Boolean(l >= r)),
+                    BinaryOp::Hits => Err(InterpreterError::TypeError("Hits operator requires game objects".to_string())),
                 }
             },
             (Value::String(l), Value::String(r)) => {
@@ -507,6 +594,36 @@ impl Interpreter {
                     BinaryOp::Equal => Ok(Value::Boolean(l == r)),
                     BinaryOp::NotEqual => Ok(Value::Boolean(l != r)),
                     _ => Err(InterpreterError::TypeError("Invalid operation for strings".to_string())),
+                }
+            },
+            (Value::GameObject(obj1_id), Value::GameObject(obj2_id)) => {
+                match op {
+                    BinaryOp::Hits => {
+                        // Check collision count between two game objects
+                        let key = format!("hits({},{})", obj1_id, obj2_id);
+                        if let Some(Value::Number(count)) = self.environment.get(&key) {
+                            Ok(Value::Number(*count))
+                        } else {
+                            Ok(Value::Number(0.0))
+                        }
+                    },
+                    BinaryOp::Equal => Ok(Value::Boolean(obj1_id == obj2_id)),
+                    BinaryOp::NotEqual => Ok(Value::Boolean(obj1_id != obj2_id)),
+                    _ => Err(InterpreterError::TypeError("Invalid operation for game objects".to_string())),
+                }
+            },
+            (Value::GameObject(obj_id), Value::Number(expected_count)) => {
+                match op {
+                    BinaryOp::Hits => {
+                        // Check if object has hit another object the expected number of times
+                        let key = format!("hits({})", obj_id);
+                        if let Some(Value::Number(actual_count)) = self.environment.get(&key) {
+                            Ok(Value::Boolean(*actual_count >= expected_count))
+                        } else {
+                            Ok(Value::Boolean(false))
+                        }
+                    },
+                    _ => Err(InterpreterError::TypeError("Invalid operation between game object and number".to_string())),
                 }
             },
             _ => Err(InterpreterError::TypeError("Type mismatch in binary operation".to_string())),
@@ -534,8 +651,8 @@ impl Interpreter {
         self.grid_state.as_ref()
     }
     
-    pub fn get_environment_value(&self, key: &str) -> Option<&Value> {
-        self.environment.get(key)
+    pub fn get_environment_value(&self, key: &str) -> Option<String> {
+        self.environment.get(key).map(|v| v.to_string())
     }
     
     // Add this new method
@@ -553,6 +670,7 @@ impl Interpreter {
         match name {
             "grid" => return self.call_grid_function(arguments),
             "tilesize" => return self.call_tilesize_function(arguments),
+            "font_size" => return self.call_font_size_function(arguments),
             "sample" => return self.call_sample_function(arguments),
             "speed" => {
                 if arguments.len() != 1 {
@@ -583,6 +701,28 @@ impl Interpreter {
                 return Ok(Value::String("Grid cleared".to_string()));
             },
             "help" => return Ok(Value::String(self.show_help())),
+            "lib" | "library" => {
+                if arguments.is_empty() {
+                    // List all memory scripts
+                    let scripts = self.list_memory_scripts();
+                    if scripts.is_empty() {
+                        return Ok(Value::String("No scripts in memory".to_string()));
+                    } else {
+                        let list = scripts.join(", ");
+                        return Ok(Value::String(format!("Memory scripts: {}", list)));
+                    }
+                } else {
+                    // Get specific script name
+                    let script_name = self.evaluate_expression(&arguments[0])?.to_string();
+                    if let Some(content) = self.get_script_from_memory(&script_name) {
+                        // Open the memory script in the editor
+                        self.script_editor = Some(ScriptEditor::new(0, Some(content.clone())));
+                        return Ok(Value::String(format!("Opened memory script: {}", script_name)));
+                    } else {
+                        return Err(InterpreterError::RuntimeError(format!("Memory script '{}' not found", script_name)));
+                    }
+                }
+            },
             // In the "create" function around line 398-408
             "ball" => {
                 // Create ball at center of current grid if grid exists
@@ -692,47 +832,103 @@ impl Interpreter {
     }
 
     fn call_grid_function(&mut self, arguments: &[Expr]) -> Result<Value, InterpreterError> {
-        if arguments.len() != 2 {
+        let is_script_context = self.current_script_owner.is_some();
+        if arguments.len() == 2 {
+            let x_val = self.evaluate_expression(&arguments[0])?;
+            let y_val = self.evaluate_expression(&arguments[1])?;
+            let x = if let Value::Number(n) = x_val {
+                if n.fract() == 0.0 && n > 0.0 && n <= 100.0 {
+                    n as u32
+                } else {
+                    return Err(InterpreterError::RuntimeError(
+                        "Grid x must be a positive integer <= 100".to_string()
+                    ));
+                }
+            } else {
+                return Err(InterpreterError::TypeError(
+                    "Grid x must be a number".to_string()
+                ));
+            };
+            let y = if let Value::Number(n) = y_val {
+                if n.fract() == 0.0 && n > 0.0 && n <= 100.0 {
+                    n as u32
+                } else {
+                    return Err(InterpreterError::RuntimeError(
+                        "Grid y must be a positive integer <= 100".to_string()
+                    ));
+                }
+            } else {
+                return Err(InterpreterError::TypeError(
+                    "Grid y must be a number".to_string()
+                ));
+            };
+            self.grid_state = Some(GridState::new(x, y));
+            self.physics_engine.update_grid_size(x as f64, y as f64);
+            
+            // Add this line to flag that graphics need updating
+            if self.current_script_owner.is_some() {
+                self.graphics_update_needed = true;
+            }
+            
+            Ok(Value::String(format!("Created {}x{} grid", x, y)))
+        } else if arguments.len() == 3 && is_script_context {
+            let x_val = self.evaluate_expression(&arguments[0])?;
+            let y_val = self.evaluate_expression(&arguments[1])?;
+            let z_val = self.evaluate_expression(&arguments[2])?;
+            let x = if let Value::Number(n) = x_val {
+                if n.fract() == 0.0 && n > 0.0 && n <= 100.0 {
+                    n as u32
+                } else {
+                    return Err(InterpreterError::RuntimeError(
+                        "Grid x must be a positive integer <= 100".to_string()
+                    ));
+                }
+            } else {
+                return Err(InterpreterError::TypeError(
+                    "Grid x must be a number".to_string()
+                ));
+            };
+            let y = if let Value::Number(n) = y_val {
+                if n.fract() == 0.0 && n > 0.0 && n <= 100.0 {
+                    n as u32
+                } else {
+                    return Err(InterpreterError::RuntimeError(
+                        "Grid y must be a positive integer <= 100".to_string()
+                    ));
+                }
+            } else {
+                return Err(InterpreterError::TypeError(
+                    "Grid y must be a number".to_string()
+                ));
+            };
+            let z = if let Value::Number(n) = z_val {
+                if n.fract() == 0.0 && n >= 0.0 {
+                    n as u32
+                } else {
+                    return Err(InterpreterError::RuntimeError(
+                        "Grid center origin z must be a non-negative integer".to_string()
+                    ));
+                }
+            } else {
+                return Err(InterpreterError::TypeError(
+                    "Grid center origin z must be a number".to_string()
+                ));
+            };
+            self.grid_state = Some(GridState::new_with_center(x, y, z));
+            self.physics_engine.update_grid_size(x as f64, y as f64);
+            
+            // Add this line to flag that graphics need updating
+            if self.current_script_owner.is_some() {
+                self.graphics_update_needed = true;
+            }
+            
+            Ok(Value::String(format!("Created {}x{} grid with center origin at {}", x, y, z)))
+        } else {
+            let expected_args = if is_script_context { "2 or 3" } else { "2" };
             return Err(InterpreterError::RuntimeError(
-                "grid() requires exactly 2 arguments (x, y)".to_string()
+                format!("grid() requires exactly {} arguments", expected_args)
             ));
         }
-
-        let x_val = self.evaluate_expression(&arguments[0])?;
-        let y_val = self.evaluate_expression(&arguments[1])?;
-
-        let x = if let Value::Number(n) = x_val {
-            if n.fract() == 0.0 && n > 0.0 && n <= 100.0 {
-                n as u32
-            } else {
-                return Err(InterpreterError::RuntimeError(
-                    "Grid x must be a positive integer <= 100".to_string()
-                ));
-            }
-        } else {
-            return Err(InterpreterError::TypeError(
-                "Grid x must be a number".to_string()
-            ));
-        };
-
-        let y = if let Value::Number(n) = y_val {
-            if n.fract() == 0.0 && n > 0.0 && n <= 100.0 {
-                n as u32
-            } else {
-                return Err(InterpreterError::RuntimeError(
-                    "Grid y must be a positive integer <= 100".to_string()
-                ));
-            }
-        } else {
-            return Err(InterpreterError::TypeError(
-                "Grid y must be a number".to_string()
-            ));
-        };
-
-        self.grid_state = Some(GridState::new(x, y));
-        // ADD THIS LINE: Update physics engine boundaries to match the new grid
-        self.physics_engine.update_grid_size(x as f64, y as f64);
-        Ok(Value::String(format!("Created {}x{} grid", x, y)))
     }
 
     fn call_tilesize_function(&mut self, arguments: &[Expr]) -> Result<Value, InterpreterError> {
@@ -759,6 +955,35 @@ impl Interpreter {
             _ => {
                 Err(InterpreterError::TypeError(
                     "tilesize() argument must be a number".to_string()
+                ))
+            }
+        }
+    }
+
+    fn call_font_size_function(&mut self, arguments: &[Expr]) -> Result<Value, InterpreterError> {
+        if arguments.len() != 1 {
+            return Err(InterpreterError::RuntimeError(
+                "font_size() requires exactly one argument".to_string()
+            ));
+        }
+        
+        let size_value = self.evaluate_expression(&arguments[0])?;
+        
+        match size_value {
+            Value::Number(size) => {
+                if size < 8.0 || size > 48.0 {
+                    return Err(InterpreterError::RuntimeError(
+                        "Font size must be between 8 and 48 pixels".to_string()
+                    ));
+                }
+                
+                self.environment.insert("__font_size".to_string(), Value::Number(size));
+                
+                Ok(Value::String(format!("Font size set to {}px", size as u32)))
+            },
+            _ => {
+                Err(InterpreterError::TypeError(
+                    "font_size() argument must be a number".to_string()
                 ))
             }
         }
@@ -877,6 +1102,71 @@ Controls:
         &self.game_objects
     }
 
+    pub fn is_script_editor_active(&self) -> bool {
+        self.script_editor.as_ref().map_or(false, |editor| editor.is_active())
+    }
+
+    pub fn get_script_editor_display_lines(&self) -> Vec<String> {
+        if let Some(editor) = &self.script_editor {
+            editor.get_display_lines()
+        } else {
+            Vec::new()
+        }
+    }
+
+    pub fn handle_script_editor_key(&mut self, key: &str) -> bool {
+        let mut editor_closed = false;
+        let mut target_id = 0;
+        let mut script_content = String::new();
+        let mut is_memory_script = false;
+        let mut filename: Option<String> = None;
+        let mut result = false;
+        
+        if let Some(editor) = &mut self.script_editor {
+            result = editor.handle_key(key);
+            
+            // If script editor was closed (save or cancel), collect the data we need
+            if !editor.is_active() {
+                editor_closed = true;
+                target_id = editor.get_target_object_id();
+                script_content = editor.get_script_content();
+                is_memory_script = editor.is_memory_script();
+                filename = editor.get_filename().cloned();
+            }
+        }
+        
+        // Handle the script saving after we're done with the editor borrow
+        if editor_closed {
+            // Remove the script editor first
+            self.script_editor = None;
+            
+            if is_memory_script {
+                // Save to memory
+                if let Some(filename) = filename {
+                    self.save_script_to_memory(filename, script_content.clone());
+                } else {
+                    // Generate script ID for unnamed memory scripts
+                    let script_id = format!("script{}", self.next_script_id);
+                    self.next_script_id += 1;
+                    self.save_script_to_memory(script_id, script_content.clone());
+                }
+            } else if target_id > 0 {
+                // Save script to the target square (existing behavior)
+                if let Some(square) = self.game_objects.get_square_mut(target_id) {
+                    square.set_script(script_content);
+                }
+            }
+        }
+        
+        result
+    }
+
+    pub fn update_script_editor_cursor(&mut self) {
+        if let Some(editor) = &mut self.script_editor {
+            editor.update_cursor_blink();
+        }
+    }
+
     fn execute_set_direction(&mut self, object_name: &str, direction: &DirectionValue) -> Result<Value, InterpreterError> {
         let object_id = if object_name == "cursor" {
             // Find object at cursor position
@@ -970,11 +1260,15 @@ Controls:
     
     // Apply the color to the actual game object using the object_id we found
     if let Some(ball) = self.game_objects.get_ball_mut(object_id) {
-        println!("Debug: Setting color on ball {}", object_id);
+        println!("Debug: Ball {} current color: {}", object_id, ball.get_color());
+        println!("Debug: Setting color on ball {} to {}", object_id, color_string);
         ball.set_color(color_string.clone());
+        println!("Debug: Ball {} new color: {}", object_id, ball.get_color());
     } else if let Some(square) = self.game_objects.get_square_mut(object_id) {
-        println!("Debug: Setting color on square {}", object_id);
+        println!("Debug: Square {} current color: {}", object_id, square.get_color());
+        println!("Debug: Setting color on square {} to {}", object_id, color_string);
         square.set_color(color_string.clone());
+        println!("Debug: Square {} new color: {}", object_id, square.get_color());
     } else {
         println!("Debug: Object {} is neither a ball nor a square", object_id);
         return Err(InterpreterError::RuntimeError(format!("Object {} is neither a ball nor a square", object_id)));
@@ -1037,6 +1331,254 @@ fn execute_set_speed(&mut self, object_name: &str, speed_mod: &SpeedModification
     
     Ok(Value::String(operation_desc))
 }
+
+fn execute_script_command(&mut self, object_name: &str, arguments: &[Expr]) -> Result<Value, InterpreterError> {
+    // Handle script(new) for creating blank scripts
+    if object_name == "new" {
+        self.script_editor = Some(ScriptEditor::new_memory_script(None));
+        return Ok(Value::String("Blank script editor opened".to_string()));
+    }
+    
+    // First, check memory scripts
+    if let Some(content) = self.get_script_from_memory(object_name) {
+        self.script_editor = Some(ScriptEditor::new_memory_script(Some(content.clone())));
+        return Ok(Value::String(format!("Script editor opened with memory script: {}", object_name)));
+    }
+    
+    // Then check disk files
+    let filename = if object_name.ends_with(".cant") {
+        object_name.to_string()
+    } else {
+        format!("{}.cant", object_name)
+    };
+    
+    if std::path::Path::new(&filename).exists() {
+        match std::fs::read_to_string(&filename) {
+            Ok(script_content) => {
+                // Use the base name (without .cant) as the display filename
+                let base_name = if filename.ends_with(".cant") {
+                    filename.trim_end_matches(".cant").to_string()
+                } else {
+                    filename.clone()
+                };
+                self.script_editor = Some(ScriptEditor::new_with_file(base_name, Some(script_content)));
+                return Ok(Value::String(format!("Script editor opened with file: {}", filename)));
+            },
+            Err(e) => {
+                return Err(InterpreterError::RuntimeError(format!("Error reading script file '{}': {}", filename, e)));
+            }
+        }
+    }
+    
+    // Finally, try to find a game object (for collision scripts)
+    let object_id = if object_name == "cursor" {
+        self.game_objects.find_object_at(self.cursor_x as f64, self.cursor_y as f64, 0.5)
+            .ok_or_else(|| InterpreterError::RuntimeError("No object at cursor position".to_string()))?
+    } else {
+        self.game_objects.find_object_by_name(object_name)
+            .ok_or_else(|| InterpreterError::RuntimeError(format!("Object '{}' not found", object_name)))?
+    };
+    
+    if let Some(square) = self.game_objects.get_square_mut(object_id) {
+        let existing_script = square.get_script().map(|s| s.to_string());
+        self.script_editor = Some(ScriptEditor::new(object_id, existing_script));
+        Ok(Value::String("Script editor opened".to_string()))
+    } else {
+        Err(InterpreterError::RuntimeError("Only squares can have scripts".to_string()))
+    }
+}
+
+pub fn handle_collisions(&mut self) {
+    let collisions = self.game_objects.check_collisions();
+    
+    for (id1, id2) in collisions {
+        // Record hits for both objects
+        if let Some(ball) = self.game_objects.get_ball_mut(id1) {
+            ball.record_hit(id2);  // Pass the other object's ID
+        }
+        if let Some(square) = self.game_objects.get_square_mut(id1) {
+            square.record_hit(id2);  // Pass the other object's ID
+        }
+        if let Some(ball) = self.game_objects.get_ball_mut(id2) {
+            ball.record_hit(id1);  // Pass the other object's ID
+        }
+        if let Some(square) = self.game_objects.get_square_mut(id2) {
+            square.record_hit(id1);  // Pass the other object's ID
+        }
+        
+        // Print verbose collision information if enabled
+        if self.verbose_mode {
+            self.print_collision_info(id1, id2);
+        }
+        
+        // Execute collision scripts
+        self.execute_collision_script(id1, id2);
+    }
+}
+
+fn print_collision_info(&self, id1: u32, id2: u32) {
+    // Print information for first object
+    if let Some(obj) = self.game_objects.get_object(id1) {
+        match obj {
+            GameObject::Ball(ball) => {
+                println!("{}: {} hits", ball.get_friendly_name(), ball.get_hit_count(id2));
+            },
+            GameObject::Square(square) => {
+                println!("{}: {} hits", square.get_friendly_name(), square.get_hit_count(id2));
+            }
+        }
+    }
+    
+    // Print information for second object
+    if let Some(obj) = self.game_objects.get_object(id2) {
+        match obj {
+            GameObject::Ball(ball) => {
+                println!("{}: {} hits", ball.get_friendly_name(), ball.get_hit_count(id1));
+            },
+            GameObject::Square(square) => {
+                println!("{}: {} hits", square.get_friendly_name(), square.get_hit_count(id1));
+            }
+        }
+    }
+}
+
+fn execute_collision_script(&mut self, id1: u32, id2: u32) {
+        // Check collision types first without borrowing
+        let is_ball1 = self.game_objects.get_ball_mut(id1).is_some();
+        let is_ball2 = self.game_objects.get_ball_mut(id2).is_some();
+        
+        // Check for ball-square collision with script
+        let collision_info = if is_ball1 && !is_ball2 {
+            // id1 is ball, check if id2 is square with script
+            if let Some(GameObject::Square(sq)) = self.game_objects.get_object(id2) {
+                if sq.get_script().is_some() {
+                    println!("Debug: Ball {} collided with square {} that has a script", id1, id2);
+                    Some((id1, id2))
+                } else { 
+                    println!("Debug: Ball {} collided with square {} but no script", id1, id2);
+                    None 
+                }
+            } else { None }
+        } else if is_ball2 && !is_ball1 {
+            // id2 is ball, check if id1 is square with script
+            if let Some(GameObject::Square(sq)) = self.game_objects.get_object(id1) {
+                if sq.get_script().is_some() {
+                    println!("Debug: Ball {} collided with square {} that has a script", id2, id1);
+                    Some((id2, id1))
+                } else { 
+                    println!("Debug: Ball {} collided with square {} but no script", id2, id1);
+                    None 
+                }
+            } else { None }
+        } else { None };
+        
+        if let Some((ball_id, square_id)) = collision_info {
+            // Set the script execution context
+            self.current_script_owner = Some(square_id);
+            
+            // Get script content and hit counts
+            let script_content = if let Some(square) = self.game_objects.get_square_mut(square_id) {
+                square.get_script().map(|s| s.to_string())
+            } else { None };
+            
+            if let Some(script) = script_content {
+                println!("Debug: Executing script: {}", script);
+                let total_hits = if let Some(square) = self.game_objects.get_square_mut(square_id) {
+                    square.get_total_hits()
+                } else { 0 };
+                
+                let ball_hits = if let Some(square) = self.game_objects.get_square_mut(square_id) {
+                    square.get_hit_count(ball_id)
+                } else { 0 };
+                
+                // Set up script environment
+                self.environment.insert("hits".to_string(), Value::Number(total_hits as f64));
+                self.environment.insert(format!("hits({})", ball_id), Value::Number(ball_hits as f64));
+                
+                // Parse and execute script commands
+                let cursor_x = self.cursor_x;
+                let cursor_y = self.cursor_y;
+                if let Err(e) = self.execute_script_block(&script, cursor_x, cursor_y) {
+                    eprintln!("Script execution error: {}", e);
+                }
+                
+                // Clean up environment and context
+                self.environment.remove("hits");
+                self.environment.remove(&format!("hits({})", ball_id));
+                self.current_script_owner = None;  // Clear script context
+            }
+        }
+    }
+
+fn execute_script_block(&mut self, script_content: &str, cursor_x: u32, cursor_y: u32) -> Result<(), InterpreterError> {
+    println!("Debug: Executing script content: {}", script_content);
+    
+    // Parse the entire script as proper AST statements instead of extracting string commands
+    let mut lexer = Lexer::new(script_content);
+    let tokens = lexer.tokenize().map_err(|e| {
+        eprintln!("Script tokenization error: {}", e);
+        InterpreterError::LexerError(e)
+    })?;
+    
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse().map_err(|e| {
+        eprintln!("Script parsing error: {}", e);
+        InterpreterError::ParseError(e)
+    })?;
+    
+    // Execute each statement in the script
+    for statement in program.statements {
+        println!("Debug: Executing statement: {:?}", statement);
+        if let Err(e) = self.execute_statement(&statement) {
+            eprintln!("Error executing script statement: {}", e);
+            // Continue executing other statements even if one fails
+        } else {
+            println!("Debug: Statement executed successfully");
+        }
+    }
+    
+    Ok(())
+}
+
+fn execute_verbose(&mut self) -> Result<Value, InterpreterError> {
+        self.verbose_mode = !self.verbose_mode;
+        let status = if self.verbose_mode { "enabled" } else { "disabled" };
+        Ok(Value::String(format!("Verbose mode {}", status)))
+    }
+
+pub fn is_verbose_mode(&self) -> bool {
+        self.verbose_mode
+    }
+
+    pub fn needs_graphics_update(&mut self) -> bool {
+        let needs_update = self.graphics_update_needed;
+        self.graphics_update_needed = false;  // Reset the flag
+        needs_update
+    }
+
+    fn execute_run_command(&mut self, script_name: &str) -> Result<Value, InterpreterError> {
+        // Add .cant extension if not present
+        let filename = if script_name.ends_with(".cant") {
+            script_name.to_string()
+        } else {
+            format!("{}.cant", script_name)
+        };
+        
+        // Check if file exists
+        if !std::path::Path::new(&filename).exists() {
+            return Err(InterpreterError::RuntimeError(format!("Script file '{}' not found", filename)));
+        }
+        
+        // Read and execute the script file
+        match std::fs::read_to_string(&filename) {
+            Ok(script_content) => {
+                println!("Debug: Running script file: {}", filename);
+                self.execute_script_block(&script_content, self.cursor_x, self.cursor_y)?;
+                Ok(Value::String(format!("Executed script: {}", filename)))
+            },
+            Err(e) => Err(InterpreterError::RuntimeError(format!("Error reading script file '{}': {}", filename, e)))
+        }
+    }
 
 fn execute_label(&mut self, object_name: &str, arguments: &[Expr], text: &str) -> Result<Value, InterpreterError> {
     let object_id = if object_name == "cursor" {

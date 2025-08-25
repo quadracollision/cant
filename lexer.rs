@@ -19,15 +19,21 @@ pub enum TokenType {
     Direction,  // for "direction" keyword
     Color,      // New: for "color" keyword
     Speed,      // New: for "speed" keyword
+    Create,     // New: for "create" command
     Play,       // New: for "play" command
     Pause,      // Add this missing token
     Stop,       // New: for "stop" command
     Clear,      // New: for "clear" command
     Destroy,    // New: for "destroy" command
     Label,      // New: for "label" command
+    Script,     // New: for "script" command
     Balls,      // New: for "balls" keyword
     Squares,    // New: for "squares" keyword
     Cursor,     // New: for "cursor" keyword
+    Self_,      // New: for "self" keyword
+    Hits,       // New: for "hits" operator
+    Verbose,    // New: for "verbose" command
+    Run,        // New: for "run" command
     
     // Direction keywords
     Left,
@@ -310,15 +316,21 @@ impl Lexer {
             "direction" => TokenType::Direction,
             "color" => TokenType::Color,
             "speed" => TokenType::Speed,
+            "create" => TokenType::Create,
+            "run" => TokenType::Run,
             "play" | "bang" => TokenType::Play,
             "pause" => TokenType::Pause,
             "stop" => TokenType::Stop,
             "clear" => TokenType::Clear,
             "destroy" => TokenType::Destroy,
             "label" => TokenType::Label,
+            "script" => TokenType::Script,
             "balls" => TokenType::Balls,
             "squares" => TokenType::Squares,
             "cursor" => TokenType::Cursor,
+            "self" => TokenType::Self_,
+            "hits" => TokenType::Hits,
+            "verbose" => TokenType::Verbose,
             "left" => TokenType::Left,
             "right" => TokenType::Right,
             "up" => TokenType::Up,

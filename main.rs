@@ -12,7 +12,9 @@ mod ball;
 mod square;
 mod physics_engine;
 mod game_state;
-mod audio_engine; // Add this line
+mod audio_engine;
+mod script_editor;
+mod input_mapping; // Add this line
 
 use winit::{
     event::{Event, WindowEvent, KeyboardInput},
@@ -25,9 +27,10 @@ use crate::interpreter::Interpreter;
 use crate::graphics::GraphicsRenderer;
 use crate::input::{InputHandler, InputAction};
 use crate::console::Console;
+use crate::input_mapping::InputMapper; // Add this line
 
-const WIDTH: u32 = 400;
-const HEIGHT: u32 = 400;
+const WIDTH: u32 = 500;
+const HEIGHT: u32 = 500;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
@@ -49,7 +52,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     let mut last_update = Instant::now();
     let mut redraw_requested = false;
-
+    let mut input_mapper = InputMapper::new(); // Add this line
+    
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
 
@@ -64,79 +68,103 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         redraw_requested = true;
                     }
                     WindowEvent::KeyboardInput { input, .. } => {
-                        let action = input_handler.handle_keyboard_input(&input);
-                        // In the main event loop where InputAction is handled
-                        match action {
-                            InputAction::MoveCursor(dx, dy) => {
-                                graphics.move_cursor(dx, dy);
-                                
-                                // Output cursor info to console
-                                let (cursor_x, cursor_y) = graphics.get_cursor_position();
-                                let object_names = interpreter.get_game_objects().find_objects_at_grid_with_names(cursor_x, cursor_y);
-                                
-                                let coord_text = format!("Cursor: ({}, {})", cursor_x, cursor_y);
-                                let info_text = if object_names.is_empty() {
-                                    coord_text
-                                } else {
-                                    format!("{} - Objects: {}", coord_text, object_names.join(", "))
-                                };
-                                
-                                console.add_line(info_text);
+                        // Check if script editor is active first
+                        if interpreter.is_script_editor_active() {
+                            // Handle script editor input
+                            let key_str = input_mapper.map_script_editor_key(&input);
+                            
+                            if !key_str.is_empty() {
+                                interpreter.handle_script_editor_key(&key_str);
                                 redraw_requested = true;
                             }
-                            InputAction::ToggleCell => {
-                                let (x, y) = graphics.get_cursor_position();
-                                if let Some(grid_state) = interpreter.get_grid_state_mut() {
-                                    grid_state.toggle_cell_at(x, y);
-                                }
-                                redraw_requested = true;
-                            }
-                            InputAction::HistoryPrevious => {
-                                console.history_previous();
-                                input_handler.set_command_buffer(console.get_current_command().to_string());
-                                redraw_requested = true; // Add this line
-                            }
-                            InputAction::HistoryNext => {
-                                console.history_next();
-                                input_handler.set_command_buffer(console.get_current_command().to_string());
-                                redraw_requested = true; // Add this line
-                            }
-                            InputAction::UpdateCommandBuffer(buffer) => {
-                                console.set_current_command(buffer);
-                                redraw_requested = true;
-                            }
-                            InputAction::UpdateCommandBufferAndResetHistory(buffer) => {
-                                console.reset_history_navigation();
-                                console.set_current_command(buffer);
-                                redraw_requested = true;
-                            }
-                            InputAction::ExecuteCommand(command) => {
-                                // Add the command to console output with prompt (like a real terminal)
-                                console.add_line(format!("> {}", command));
-                                
-                                let (cursor_x, cursor_y) = graphics.get_cursor_position();
-                                match interpreter.execute_command(&command, cursor_x, cursor_y) {
-                                    Ok(result) => {
-                                        if !result.is_empty() {
-                                            console.add_line(result);
+                        } else {
+                            // Handle normal console input
+                            let script_editor_active = interpreter.is_script_editor_active();
+                            let action = input_handler.handle_keyboard_input(&input, script_editor_active);
+                            
+                            // Process the input action
+                            match action {
+                                InputAction::ExecuteCommand(command) => {
+                                    // Add command to history and clear buffers
+                                    console.execute_command(command.clone());
+                                    input_handler.set_command_buffer(String::new());
+                                    
+                                    // Get current cursor position from grid state
+                                    let (cursor_x, cursor_y) = if let Some(grid_state) = interpreter.get_grid_state() {
+                                        (grid_state.cursor_x, grid_state.cursor_y)
+                                    } else {
+                                        (0, 0)
+                                    };
+                                    
+                                    match interpreter.execute_command(&command, cursor_x, cursor_y) {
+                                        Ok(result) => {
+                                            if !result.is_empty() {
+                                                console.add_output(&result);
+                                            }
+                                            // Update graphics renderer with new grid dimensions if grid was created
+                                            if let Some(grid_state) = interpreter.get_grid_state() {
+                                                graphics.set_grid_size(grid_state.width, grid_state.height);
+                                                // Sync graphics renderer cursor with grid state cursor
+                                                let (grid_cursor_x, grid_cursor_y) = (grid_state.cursor_x, grid_state.cursor_y);
+                                                graphics.move_cursor(grid_cursor_x as i32 - graphics.get_cursor_position().0 as i32, 
+                                                                   grid_cursor_y as i32 - graphics.get_cursor_position().1 as i32);
+                                            }
+                                            
+                                            // Sync font size from interpreter to graphics renderer
+                                            if let Some(font_size) = interpreter.get_environment_value("__font_size") {
+                                                if let Ok(size) = font_size.parse::<f32>() {
+                                                    graphics.set_font_size(size);
+                                                }
+                                            }
                                         }
+                                        Err(err) => {
+                                            console.add_error(&format!("{}", err));
+                                        }
+                                    }
+                                    redraw_requested = true;
+                                }
+                                InputAction::UpdateCommandBuffer(buffer) => {
+                                    console.set_current_command(buffer);
+                                    redraw_requested = true;
+                                }
+                                InputAction::UpdateCommandBufferAndResetHistory(buffer) => {
+                                    console.set_current_command(buffer);
+                                    console.reset_history_navigation(); // Add this line!
+                                    redraw_requested = true;
+                                }
+                                InputAction::MoveCursor(dx, dy) => {
+                                    // Move cursor in both grid state and graphics renderer
+                                    if let Some(grid_state) = interpreter.get_grid_state_mut() {
+                                        grid_state.move_cursor(dx, dy);
                                         
-                                        // Check if grid was created/modified and update graphics
-                                        if let Some(grid_state) = interpreter.get_grid_state() {
-                                            graphics.set_grid_size(grid_state.width, grid_state.height);
+                                        // Get cursor position after movement
+                                        let cursor_x = grid_state.cursor_x;
+                                        let cursor_y = grid_state.cursor_y;
+                                        
+                                        // Display cursor position
+                                        console.add_output(&format!("Cursor: ({}, {})", cursor_x, cursor_y));
+                                        
+                                        // Check for objects at cursor position and display them
+                                        let objects_at_cursor = interpreter.get_game_objects().find_objects_at_grid_with_names(cursor_x, cursor_y);
+                                        if !objects_at_cursor.is_empty() {
+                                            console.add_output(&format!("Objects at ({}, {}): {}", cursor_x, cursor_y, objects_at_cursor.join(", ")));
                                         }
                                     }
-                                    Err(e) => {
-                                        console.add_line(format!("Error: {}", e));
-                                    }
+                                    graphics.move_cursor(dx, dy);
+                                    redraw_requested = true;
                                 }
-                                
-                                // Clear both the console and input handler command buffers
-                                console.execute_command(command);
-                                input_handler.set_command_buffer(String::new()); // Add this line
-                                redraw_requested = true;
+                                InputAction::HistoryPrevious => {
+                                    console.history_previous();
+                                    input_handler.set_command_buffer(console.get_current_command().to_string());
+                                    redraw_requested = true;
+                                }
+                                InputAction::HistoryNext => {
+                                    console.history_next();
+                                    input_handler.set_command_buffer(console.get_current_command().to_string());
+                                    redraw_requested = true;
+                                }
+                                _ => {}
                             }
-                            InputAction::None => {}
                         }
                     }
                     _ => {}
@@ -151,14 +179,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Update physics if game is playing
                 interpreter.update_physics(dt);
                 
+                // Update script editor cursor blink if active
+                if interpreter.is_script_editor_active() {
+                    interpreter.update_script_editor_cursor();
+                    redraw_requested = true;
+                }
+                
+                // Check if graphics need updating after script execution
+                if interpreter.needs_graphics_update() {
+                    if let Some(grid_state) = interpreter.get_grid_state() {
+                        graphics.set_grid_size(grid_state.width, grid_state.height);
+                    }
+                    redraw_requested = true;
+                }
+                
                 // Always request redraw when playing to show ball movement
                 if interpreter.is_playing() {
                     redraw_requested = true;
                 }
                 
                 if redraw_requested {
-                    let console_lines = console.get_display_lines(10);
-                    graphics.render(interpreter.get_grid_state(), &console_lines, Some(interpreter.get_game_objects()));
+                    // Check if script editor is active
+                    let display_lines = if interpreter.is_script_editor_active() {
+                        interpreter.get_script_editor_display_lines()
+                    } else {
+                        console.get_display_lines(6)  // Reduced from 10 to 6 to account for input line
+                    };
+                    
+                    graphics.render(interpreter.get_grid_state(), &display_lines, Some(interpreter.get_game_objects()));
                     
                     if let Err(err) = graphics.present() {
                         log::error!("Render error: {}", err);

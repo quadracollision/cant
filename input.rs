@@ -16,12 +16,12 @@ impl InputHandler {
         }
     }
 
-    pub fn handle_keyboard_input(&mut self, input: &KeyboardInput) -> InputAction {
+    pub fn handle_keyboard_input(&mut self, input: &KeyboardInput, script_editor_active: bool) -> InputAction {
         if let Some(key_code) = input.virtual_keycode {
             match input.state {
                 ElementState::Pressed => {
                     self.pressed_keys.insert(key_code);
-                    self.handle_key_press(key_code)
+                    self.handle_key_press(key_code, script_editor_active)
                 }
                 ElementState::Released => {
                     self.pressed_keys.remove(&key_code);
@@ -33,14 +33,14 @@ impl InputHandler {
         }
     }
 
-    fn handle_key_press(&mut self, key_code: VirtualKeyCode) -> InputAction {
+    fn handle_key_press(&mut self, key_code: VirtualKeyCode, script_editor_active: bool) -> InputAction {
         let shift_pressed = self.pressed_keys.contains(&VirtualKeyCode::LShift) 
                      || self.pressed_keys.contains(&VirtualKeyCode::RShift);
         
         match key_code {
             VirtualKeyCode::Up => {
-                if shift_pressed {
-                    // Shift+Up for command history
+                if shift_pressed && !script_editor_active {
+                    // Shift+Up for command history (only when script editor is not active)
                     InputAction::HistoryPrevious
                 } else {
                     self.cursor_moved = true;
@@ -48,8 +48,8 @@ impl InputHandler {
                 }
             }
             VirtualKeyCode::Down => {
-                if shift_pressed {
-                    // Shift+Down for command history
+                if shift_pressed && !script_editor_active {
+                    // Shift+Down for command history (only when script editor is not active)
                     InputAction::HistoryNext
                 } else {
                     self.cursor_moved = true;

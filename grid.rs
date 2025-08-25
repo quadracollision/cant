@@ -5,6 +5,7 @@ pub struct GridState {
     pub cursor_x: u32,
     pub cursor_y: u32,
     pub cells: Vec<Vec<bool>>, // 2D grid of cells
+    pub center_origin: Option<u32>, // New: center origin point for script editor
 }
 
 impl GridState {
@@ -17,6 +18,21 @@ impl GridState {
             cursor_x: 0,
             cursor_y: 0,
             cells,
+            center_origin: None, // Default to no center origin
+        }
+    }
+    
+    // New constructor with center origin
+    pub fn new_with_center(width: u32, height: u32, center_origin: u32) -> Self {
+        let cells = vec![vec![false; width as usize]; height as usize];
+        
+        Self {
+            width,
+            height,
+            cursor_x: 0,
+            cursor_y: 0,
+            cells,
+            center_origin: Some(center_origin),
         }
     }
 

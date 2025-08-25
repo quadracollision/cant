@@ -1,688 +1,194 @@
-//! Shared font rendering module for the Canticlec Churn Music Sequencer
-//! Provides consistent 8x12 bitmap font rendering across all UI components
+//! System font rendering module using ab_glyph
+//! Provides scalable, high-quality font rendering
 
-use std::collections::HashMap;
+use ab_glyph::{FontRef, PxScale, point, Font};
+use std::sync::OnceLock;
 
-/// 8x12 bitmap font renderer
-pub struct Font {
-    patterns: HashMap<char, [u8; 12]>,
+/// Font renderer using the font file from assets
+pub struct FontRenderer {
+    font: FontRef<'static>,
+    base_size: f32,
 }
 
-impl Font {
+static FONT_RENDERER: OnceLock<FontRenderer> = OnceLock::new();
+
+// Load the font from assets folder
+const FONT_DATA: &[u8] = include_bytes!("../assets/courier.ttf");
+
+impl FontRenderer {
     pub fn new() -> Self {
-        let mut patterns = HashMap::new();
-        
-        // Define all character patterns
-        patterns.insert('A', [
-            0b01110000, 0b10001000, 0b10001000, 0b10001000,
-            0b11111000, 0b10001000, 0b10001000, 0b10001000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        patterns.insert('a', [
-            0b01110000, 0b10001000, 0b10001000, 0b10001000,
-            0b11111000, 0b10001000, 0b10001000, 0b10001000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('B', [
-            0b11110000, 0b10001000, 0b10001000, 0b11110000,
-            0b11110000, 0b10001000, 0b10001000, 0b11110000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        patterns.insert('b', [
-            0b11110000, 0b10001000, 0b10001000, 0b11110000,
-            0b11110000, 0b10001000, 0b10001000, 0b11110000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('C', [
-            0b01110000, 0b10001000, 0b10000000, 0b10000000,
-            0b10000000, 0b10000000, 0b10001000, 0b01110000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        patterns.insert('c', [
-            0b01110000, 0b10001000, 0b10000000, 0b10000000,
-            0b10000000, 0b10000000, 0b10001000, 0b01110000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('D', [
-            0b11110000, 0b10001000, 0b10001000, 0b10001000,
-            0b10001000, 0b10001000, 0b10001000, 0b11110000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        patterns.insert('d', [
-            0b11110000, 0b10001000, 0b10001000, 0b10001000,
-            0b10001000, 0b10001000, 0b10001000, 0b11110000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('E', [
-            0b11111000, 0b10000000, 0b10000000, 0b11110000,
-            0b11110000, 0b10000000, 0b10000000, 0b11111000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        patterns.insert('e', [
-            0b11111000, 0b10000000, 0b10000000, 0b11110000,
-            0b11110000, 0b10000000, 0b10000000, 0b11111000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('F', [
-            0b11111000, 0b10000000, 0b10000000, 0b11110000,
-            0b11110000, 0b10000000, 0b10000000, 0b10000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        patterns.insert('f', [
-            0b11111000, 0b10000000, 0b10000000, 0b11110000,
-            0b11110000, 0b10000000, 0b10000000, 0b10000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('G', [
-            0b01110000, 0b10001000, 0b10000000, 0b10000000,
-            0b10011000, 0b10001000, 0b10001000, 0b01110000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        patterns.insert('g', [
-            0b01110000, 0b10001000, 0b10000000, 0b10000000,
-            0b10011000, 0b10001000, 0b10001000, 0b01110000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('H', [
-            0b10001000, 0b10001000, 0b10001000, 0b11111000,
-            0b11111000, 0b10001000, 0b10001000, 0b10001000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        patterns.insert('h', [
-            0b10001000, 0b10001000, 0b10001000, 0b11111000,
-            0b11111000, 0b10001000, 0b10001000, 0b10001000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('I', [
-            0b01110000, 0b00100000, 0b00100000, 0b00100000,
-            0b00100000, 0b00100000, 0b00100000, 0b01110000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        patterns.insert('i', [
-            0b01110000, 0b00100000, 0b00100000, 0b00100000,
-            0b00100000, 0b00100000, 0b00100000, 0b01110000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('J', [
-            0b00111000, 0b00001000, 0b00001000, 0b00001000,
-            0b00001000, 0b10001000, 0b10001000, 0b01110000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        patterns.insert('j', [
-            0b00111000, 0b00001000, 0b00001000, 0b00001000,
-            0b00001000, 0b10001000, 0b10001000, 0b01110000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('K', [
-            0b10001000, 0b10010000, 0b10100000, 0b11000000,
-            0b11000000, 0b10100000, 0b10010000, 0b10001000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        patterns.insert('k', [
-            0b10001000, 0b10010000, 0b10100000, 0b11000000,
-            0b11000000, 0b10100000, 0b10010000, 0b10001000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('L', [
-            0b10000000, 0b10000000, 0b10000000, 0b10000000,
-            0b10000000, 0b10000000, 0b10000000, 0b11111000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        patterns.insert('l', [
-            0b10000000, 0b10000000, 0b10000000, 0b10000000,
-            0b10000000, 0b10000000, 0b10000000, 0b11111000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('M', [
-            0b10001000, 0b11011000, 0b10101000, 0b10001000,
-            0b10001000, 0b10001000, 0b10001000, 0b10001000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        patterns.insert('m', [
-            0b10001000, 0b11011000, 0b10101000, 0b10001000,
-            0b10001000, 0b10001000, 0b10001000, 0b10001000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('N', [
-            0b10001000, 0b11001000, 0b10101000, 0b10011000,
-            0b10001000, 0b10001000, 0b10001000, 0b10001000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        patterns.insert('n', [
-            0b10001000, 0b11001000, 0b10101000, 0b10011000,
-            0b10001000, 0b10001000, 0b10001000, 0b10001000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('O', [
-            0b01110000, 0b10001000, 0b10001000, 0b10001000,
-            0b10001000, 0b10001000, 0b10001000, 0b01110000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        patterns.insert('o', [
-            0b01110000, 0b10001000, 0b10001000, 0b10001000,
-            0b10001000, 0b10001000, 0b10001000, 0b01110000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('P', [
-            0b11110000, 0b10001000, 0b10001000, 0b11110000,
-            0b10000000, 0b10000000, 0b10000000, 0b10000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        patterns.insert('p', [
-            0b11110000, 0b10001000, 0b10001000, 0b11110000,
-            0b10000000, 0b10000000, 0b10000000, 0b10000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('Q', [
-            0b01110000, 0b10001000, 0b10001000, 0b10001000,
-            0b10101000, 0b10010000, 0b01101000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        patterns.insert('q', [
-            0b01110000, 0b10001000, 0b10001000, 0b10001000,
-            0b10101000, 0b10010000, 0b01101000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('R', [
-            0b11110000, 0b10001000, 0b10001000, 0b11110000,
-            0b10100000, 0b10010000, 0b10001000, 0b10001000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        patterns.insert('r', [
-            0b11110000, 0b10001000, 0b10001000, 0b11110000,
-            0b10100000, 0b10010000, 0b10001000, 0b10001000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('S', [
-            0b01110000, 0b10001000, 0b10000000, 0b01110000,
-            0b00001000, 0b00001000, 0b10001000, 0b01110000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        patterns.insert('s', [
-            0b01110000, 0b10001000, 0b10000000, 0b01110000,
-            0b00001000, 0b00001000, 0b10001000, 0b01110000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('T', [
-            0b11111000, 0b00100000, 0b00100000, 0b00100000,
-            0b00100000, 0b00100000, 0b00100000, 0b00100000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        patterns.insert('t', [
-            0b11111000, 0b00100000, 0b00100000, 0b00100000,
-            0b00100000, 0b00100000, 0b00100000, 0b00100000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('U', [
-            0b10001000, 0b10001000, 0b10001000, 0b10001000,
-            0b10001000, 0b10001000, 0b10001000, 0b01110000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        patterns.insert('u', [
-            0b10001000, 0b10001000, 0b10001000, 0b10001000,
-            0b10001000, 0b10001000, 0b10001000, 0b01110000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('V', [
-            0b10001000, 0b10001000, 0b10001000, 0b10001000,
-            0b10001000, 0b01010000, 0b00100000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        patterns.insert('v', [
-            0b10001000, 0b10001000, 0b10001000, 0b10001000,
-            0b10001000, 0b01010000, 0b00100000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('W', [
-            0b10001000, 0b10001000, 0b10001000, 0b10001000,
-            0b10101000, 0b11011000, 0b10001000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        patterns.insert('w', [
-            0b10001000, 0b10001000, 0b10001000, 0b10001000,
-            0b10101000, 0b11011000, 0b10001000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('X', [
-            0b10001000, 0b01010000, 0b00100000, 0b00100000,
-            0b00100000, 0b01010000, 0b10001000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        patterns.insert('x', [
-            0b10001000, 0b01010000, 0b00100000, 0b00100000,
-            0b00100000, 0b01010000, 0b10001000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('Y', [
-            0b10001000, 0b10001000, 0b01010000, 0b00100000,
-            0b00100000, 0b00100000, 0b00100000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        patterns.insert('y', [
-            0b10001000, 0b10001000, 0b01010000, 0b00100000,
-            0b00100000, 0b00100000, 0b00100000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('Z', [
-            0b11111000, 0b00001000, 0b00010000, 0b00100000,
-            0b01000000, 0b10000000, 0b11111000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        patterns.insert('z', [
-            0b11111000, 0b00001000, 0b00010000, 0b00100000,
-            0b01000000, 0b10000000, 0b11111000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        // Numbers
-        patterns.insert('0', [
-            0b01110000, 0b10001000, 0b10011000, 0b10101000,
-            0b11001000, 0b10001000, 0b01110000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('1', [
-            0b00100000, 0b01100000, 0b00100000, 0b00100000,
-            0b00100000, 0b00100000, 0b01110000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('2', [
-            0b01110000, 0b10001000, 0b00001000, 0b00010000,
-            0b00100000, 0b01000000, 0b11111000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('3', [
-            0b01110000, 0b10001000, 0b00001000, 0b00110000,
-            0b00001000, 0b10001000, 0b01110000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('4', [
-            0b00010000, 0b00110000, 0b01010000, 0b10010000,
-            0b11111000, 0b00010000, 0b00010000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('5', [
-            0b11111000, 0b10000000, 0b11110000, 0b00001000,
-            0b00001000, 0b10001000, 0b01110000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('6', [
-            0b00110000, 0b01000000, 0b10000000, 0b11110000,
-            0b10001000, 0b10001000, 0b01110000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('7', [
-            0b11111000, 0b00001000, 0b00010000, 0b00100000,
-            0b01000000, 0b01000000, 0b01000000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('8', [
-            0b01110000, 0b10001000, 0b10001000, 0b01110000,
-            0b10001000, 0b10001000, 0b01110000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('9', [
-            0b01110000, 0b10001000, 0b10001000, 0b01111000,
-            0b00001000, 0b00010000, 0b01100000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        // Special characters
-        patterns.insert(' ', [
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('.', [
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-            0b00000000, 0b00000000, 0b01100000, 0b01100000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert(',', [
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-            0b00000000, 0b01100000, 0b01100000, 0b01000000,
-            0b10000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert(':', [
-            0b00000000, 0b00000000, 0b01100000, 0b01100000,
-            0b00000000, 0b01100000, 0b01100000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert(';', [
-            0b00000000, 0b00000000, 0b01100000, 0b01100000,
-            0b00000000, 0b01100000, 0b01000000, 0b10000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('!', [
-            0b00100000, 0b00100000, 0b00100000, 0b00100000,
-            0b00100000, 0b00000000, 0b00100000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('?', [
-            0b01110000, 0b10001000, 0b00001000, 0b00010000,
-            0b00100000, 0b00000000, 0b00100000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('(', [
-            0b00010000, 0b00100000, 0b01000000, 0b01000000,
-            0b01000000, 0b00100000, 0b00010000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert(')', [
-            0b01000000, 0b00100000, 0b00010000, 0b00010000,
-            0b00010000, 0b00100000, 0b01000000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('-', [
-            0b00000000, 0b00000000, 0b00000000, 0b11111000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('_', [
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b11111000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('/', [
-            0b00000000, 0b00001000, 0b00010000, 0b00100000,
-            0b01000000, 0b10000000, 0b00000000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('\\', [
-            0b00000000, 0b10000000, 0b01000000, 0b00100000,
-            0b00010000, 0b00001000, 0b00000000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('|', [
-            0b00100000, 0b00100000, 0b00100000, 0b00100000,
-            0b00100000, 0b00100000, 0b00100000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('+', [
-            0b00000000, 0b00100000, 0b00100000, 0b11111000,
-            0b00100000, 0b00100000, 0b00000000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('=', [
-            0b00000000, 0b00000000, 0b11111000, 0b00000000,
-            0b11111000, 0b00000000, 0b00000000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('<', [
-            0b00010000, 0b00100000, 0b01000000, 0b10000000,
-            0b01000000, 0b00100000, 0b00010000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('>', [
-            0b10000000, 0b01000000, 0b00100000, 0b00010000,
-            0b00100000, 0b01000000, 0b10000000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        // Add missing special characters
-        patterns.insert('@', [
-            0b01110000, 0b10001000, 0b10101000, 0b10111000,
-            0b10100000, 0b10000000, 0b01110000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('#', [
-            0b01010000, 0b01010000, 0b11111000, 0b01010000,
-            0b11111000, 0b01010000, 0b01010000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('$', [
-            0b00100000, 0b01111000, 0b10100000, 0b01110000,
-            0b00101000, 0b11110000, 0b00100000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('%', [
-            0b11000000, 0b11001000, 0b00010000, 0b00100000,
-            0b01000000, 0b10011000, 0b00011000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('^', [
-            0b00100000, 0b01010000, 0b10001000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('&', [
-            0b01100000, 0b10010000, 0b10100000, 0b01000000,
-            0b10101000, 0b10010000, 0b01101000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('*', [
-            0b00000000, 0b00100000, 0b10101000, 0b01110000,
-            0b10101000, 0b00100000, 0b00000000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('"', [
-            0b01010000, 0b01010000, 0b01010000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('{', [
-            0b00110000, 0b01000000, 0b01000000, 0b10000000,
-            0b01000000, 0b01000000, 0b00110000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        patterns.insert('}', [
-            0b11000000, 0b00100000, 0b00100000, 0b00010000,
-            0b00100000, 0b00100000, 0b11000000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
-        
-        Self { patterns }
+        let font = FontRef::try_from_slice(FONT_DATA)
+            .expect("Failed to load font from assets/courier.ttf");
+        
+        Self {
+            font,
+            base_size: 14.0,
+        }
     }
     
-    /// Draw a single character at the specified position
-    pub fn draw_char(&self, frame: &mut [u8], ch: char, x: usize, y: usize, color: [u8; 3], window_width: usize) {
-        let pattern = self.patterns.get(&ch).unwrap_or(&[
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-        ]);
+    /// Get character dimensions for a given scale
+    pub fn get_char_dimensions(&self, scale: f32) -> (usize, usize) {
+        let px_scale = PxScale::from(self.base_size * scale);
+        let glyph_id = self.font.glyph_id('M');
+        let scaled_glyph = glyph_id.with_scale(px_scale);
         
-        for (row, &byte) in pattern.iter().enumerate() {
-            for col in 0..8 {
-                if (byte >> (7 - col)) & 1 == 1 {
-                    let px = x + col;
-                    let py = y + row;
+        let h_advance = self.font.h_advance_unscaled(glyph_id) * px_scale.x / self.font.units_per_em().unwrap_or(1000.0);
+        let v_metrics = self.font.height_unscaled() * px_scale.y / self.font.units_per_em().unwrap_or(1000.0);
+        
+        (h_advance as usize, v_metrics as usize)
+    }
+    
+    /// Get line height for a given scale
+    pub fn get_line_height(&self, scale: f32) -> usize {
+        let px_scale = PxScale::from(self.base_size * scale);
+        let v_metrics = self.font.height_unscaled() * px_scale.y / self.font.units_per_em().unwrap_or(1000.0);
+        (v_metrics * 1.2) as usize // Add 20% line spacing
+    }
+    
+    /// Render a single character
+    pub fn draw_char(&self, frame: &mut [u8], ch: char, x: usize, y: usize, color: [u8; 3], window_width: usize, scale: f32) {
+        let px_scale = PxScale::from(self.base_size * scale);
+        let glyph_id = self.font.glyph_id(ch);
+        let scaled_glyph = glyph_id.with_scale(px_scale);
+        
+        if let Some(outlined) = self.font.outline_glyph(scaled_glyph) {
+            let bounds = outlined.px_bounds();
+            
+            outlined.draw(|gx, gy, coverage| {
+                if coverage > 0.0 {
+                    let px = x as i32 + gx as i32 + bounds.min.x as i32;
+                    let py = y as i32 + gy as i32 + bounds.min.y as i32;
+                    
+                    if px >= 0 && py >= 0 {
+                        let px = px as usize;
+                        let py = py as usize;
+                        
+                        if px < window_width && py < frame.len() / (window_width * 4) {
+                            let idx = (py * window_width + px) * 4;
+                            if idx + 3 < frame.len() {
+                                let alpha = (coverage * 255.0) as u8;
+                                if alpha > 0 {
+                                    // Alpha blending
+                                    let inv_alpha = 255 - alpha;
+                                    frame[idx] = ((frame[idx] as u16 * inv_alpha as u16 + color[2] as u16 * alpha as u16) / 255) as u8; // B
+                                    frame[idx + 1] = ((frame[idx + 1] as u16 * inv_alpha as u16 + color[1] as u16 * alpha as u16) / 255) as u8; // G
+                                    frame[idx + 2] = ((frame[idx + 2] as u16 * inv_alpha as u16 + color[0] as u16 * alpha as u16) / 255) as u8; // R
+                                    frame[idx + 3] = 255; // A
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    }
+    
+    /// Render text with optional selection highlighting
+    pub fn draw_text(&self, frame: &mut [u8], text: &str, x: usize, y: usize, color: [u8; 3], selected: bool, window_width: usize, scale: f32) {
+        let (char_width, char_height) = self.get_char_dimensions(scale);
+        
+        // Draw selection background if selected
+        if selected {
+            let selection_color = [100, 100, 200]; // Light blue background
+            let text_width = text.len() * char_width;
+            
+            for py in y..y + char_height {
+                for px in x..x + text_width {
                     if px < window_width && py < frame.len() / (window_width * 4) {
                         let idx = (py * window_width + px) * 4;
                         if idx + 3 < frame.len() {
-                            frame[idx] = color[0];     // R
-                            frame[idx + 1] = color[1]; // G
-                            frame[idx + 2] = color[2]; // B
-                            frame[idx + 3] = 255;      // A
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    /// Draw text with optional background highlighting
-    pub fn draw_text(&self, frame: &mut [u8], text: &str, x: usize, y: usize, color: [u8; 3], selected: bool, window_width: usize) {
-        let bg_color = if selected { [80, 80, 120] } else { [0, 0, 0] };
-        
-        // Draw background if selected
-        if selected {
-            let text_width = text.len() * 8;
-            let text_height = 12;
-            for py in y..y + text_height {
-                for px in x..x + text_width {
-                    if px < window_width && py < frame.len() / (window_width * 4) {
-                        let index = (py * window_width + px) * 4;
-                        if index + 3 < frame.len() {
-                            frame[index] = bg_color[0];
-                            frame[index + 1] = bg_color[1];
-                            frame[index + 2] = bg_color[2];
+                            frame[idx] = selection_color[2];     // B
+                            frame[idx + 1] = selection_color[1]; // G
+                            frame[idx + 2] = selection_color[0]; // R
+                            frame[idx + 3] = 255;                // A
                         }
                     }
                 }
             }
         }
         
-        // Draw text characters
-        for (i, ch) in text.chars().enumerate() {
-            self.draw_char(frame, ch, x + i * 8, y, color, window_width);
-        }
-    }
-    
-    /// Draw text with syntax highlighting (for program editor)
-    pub fn draw_syntax_highlighted_text(&self, frame: &mut [u8], text: &str, x: usize, y: usize, window_width: usize) {
-        let keywords = ["def", "if", "then", "and", "set", "create", "with", "end", "hits", "times"];
-        let colors = [
-            "red", "green", "blue", "yellow", "cyan", "magenta", "white", "gray", "orange", "purple"
-        ];
-        
+        // Draw each character
         let mut current_x = x;
-        let mut i = 0;
-        let chars: Vec<char> = text.chars().collect();
-        
-        while i < chars.len() {
-            let mut word = String::new();
-            let word_start = i;
-            
-            // Extract word
-            while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
-                word.push(chars[i]);
-                i += 1;
-            }
-            
-            if !word.is_empty() {
-                let color = if keywords.contains(&word.as_str()) {
-                    [100, 200, 255] // Blue for keywords
-                } else if colors.contains(&word.as_str()) {
-                    [255, 150, 100] // Orange for colors
-                } else if word.chars().all(|c| c.is_ascii_digit()) {
-                    [150, 255, 150] // Green for numbers
-                } else {
-                    [200, 200, 200] // Default gray
-                };
-                
-                for ch in word.chars() {
-                    self.draw_char(frame, ch, current_x, y, color, window_width);
-                    current_x += 8;
-                }
-            }
-            
-            // Handle non-word characters
-            if i < chars.len() {
-                self.draw_char(frame, chars[i], current_x, y, [200, 200, 200], window_width);
-                current_x += 8;
-                i += 1;
+        for ch in text.chars() {
+            if current_x + char_width <= window_width {
+                self.draw_char(frame, ch, current_x, y, color, window_width, scale);
+                current_x += char_width;
+            } else {
+                break; // Stop if we would go off screen
             }
         }
     }
     
-    /// Draw a cursor at the specified position
-    pub fn draw_cursor(&self, frame: &mut [u8], x: usize, y: usize, window_width: usize) {
-        // Draw a simple vertical line cursor
-        for dy in 0..12 {
-            let py = y + dy;
-            if x < window_width && py < frame.len() / (window_width * 4) {
-                let idx = (py * window_width + x) * 4;
-                if idx + 3 < frame.len() {
-                    frame[idx] = 255;     // R - white cursor
-                    frame[idx + 1] = 255; // G
-                    frame[idx + 2] = 255; // B
-                    frame[idx + 3] = 255; // A
+    /// Draw syntax highlighted text (placeholder - uses regular text for now)
+    pub fn draw_syntax_highlighted_text(&self, frame: &mut [u8], text: &str, x: usize, y: usize, window_width: usize, scale: f32) {
+        self.draw_text(frame, text, x, y, [255, 255, 255], false, window_width, scale);
+    }
+    
+    /// Draw cursor
+    pub fn draw_cursor(&self, frame: &mut [u8], x: usize, y: usize, window_width: usize, scale: f32) {
+        let (char_width, char_height) = self.get_char_dimensions(scale);
+        let cursor_color = [255, 255, 255]; // White cursor
+        
+        // Draw a vertical line cursor
+        for py in y..y + char_height {
+            for px in x..x + 2 { // 2 pixel wide cursor
+                if px < window_width && py < frame.len() / (window_width * 4) {
+                    let idx = (py * window_width + px) * 4;
+                    if idx + 3 < frame.len() {
+                        frame[idx] = cursor_color[2];     // B
+                        frame[idx + 1] = cursor_color[1]; // G
+                        frame[idx + 2] = cursor_color[0]; // R
+                        frame[idx + 3] = 255;             // A
+                    }
                 }
             }
         }
     }
-}
-
-/// Global font instance
-static mut FONT_INSTANCE: Option<Font> = None;
-static FONT_INIT: std::sync::Once = std::sync::Once::new();
-
-/// Get the global font instance
-pub fn get_font() -> &'static Font {
-    unsafe {
-        FONT_INIT.call_once(|| {
-            FONT_INSTANCE = Some(Font::new());
-        });
-        FONT_INSTANCE.as_ref().unwrap()
+    
+    /// Draw tagged text (placeholder - uses regular text for now)
+    pub fn draw_tagged_text(&self, frame: &mut [u8], text: &str, x: usize, y: usize, window_width: usize, scale: f32) {
+        self.draw_text(frame, text, x, y, [255, 255, 255], false, window_width, scale);
     }
 }
 
-/// Convenience function to draw text using the global font
+// Global font renderer instance
+pub fn get_font() -> &'static FontRenderer {
+    FONT_RENDERER.get_or_init(|| FontRenderer::new())
+}
+
+// Convenience functions for backward compatibility
 pub fn draw_text(frame: &mut [u8], text: &str, x: usize, y: usize, color: [u8; 3], selected: bool, window_width: usize) {
-    get_font().draw_text(frame, text, x, y, color, selected, window_width);
+    get_font().draw_text(frame, text, x, y, color, selected, window_width, 1.0);
 }
 
-/// Convenience function to draw a character using the global font
+pub fn draw_text_scaled(frame: &mut [u8], text: &str, x: usize, y: usize, color: [u8; 3], selected: bool, window_width: usize, scale: f32) {
+    get_font().draw_text(frame, text, x, y, color, selected, window_width, scale);
+}
+
 pub fn draw_char(frame: &mut [u8], ch: char, x: usize, y: usize, color: [u8; 3], window_width: usize) {
-    get_font().draw_char(frame, ch, x, y, color, window_width);
+    get_font().draw_char(frame, ch, x, y, color, window_width, 1.0);
 }
 
-/// Convenience function to draw syntax highlighted text using the global font
+pub fn draw_char_scaled(frame: &mut [u8], ch: char, x: usize, y: usize, color: [u8; 3], window_width: usize, scale: f32) {
+    get_font().draw_char(frame, ch, x, y, color, window_width, scale);
+}
+
 pub fn draw_syntax_highlighted_text(frame: &mut [u8], text: &str, x: usize, y: usize, window_width: usize) {
-    get_font().draw_syntax_highlighted_text(frame, text, x, y, window_width);
+    get_font().draw_syntax_highlighted_text(frame, text, x, y, window_width, 1.0);
 }
 
-/// Convenience function to draw a cursor using the global font
 pub fn draw_cursor(frame: &mut [u8], x: usize, y: usize, window_width: usize) {
-    get_font().draw_cursor(frame, x, y, window_width);
+    get_font().draw_cursor(frame, x, y, window_width, 1.0);
+}
+
+pub fn draw_tagged_text(frame: &mut [u8], text: &str, x: usize, y: usize, window_width: usize) {
+    get_font().draw_tagged_text(frame, text, x, y, window_width, 1.0);
+}
+
+pub fn get_char_dimensions(scale: f32) -> (usize, usize) {
+    get_font().get_char_dimensions(scale)
+}
+
+pub fn get_line_height(scale: f32) -> usize {
+    get_font().get_line_height(scale)
 }

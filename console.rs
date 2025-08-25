@@ -75,10 +75,13 @@ impl Console {
         // Write to log file first
         self.write_to_log(&line);
         
-        // Then add to console display
-        self.lines.push_back(line);
-        while self.lines.len() > self.max_lines {
-            self.lines.pop_front();
+        // Wrap line at 41 characters and add to console display
+        let wrapped_lines = self.wrap_text(&line, 41);
+        for wrapped_line in wrapped_lines {
+            self.lines.push_back(wrapped_line);
+            while self.lines.len() > self.max_lines {
+                self.lines.pop_front();
+            }
         }
     }
 
@@ -88,6 +91,46 @@ impl Console {
         }
     }
 
+    // Add this new helper method
+    fn wrap_text(&self, text: &str, max_width: usize) -> Vec<String> {
+        if text.len() <= max_width {
+            return vec![text.to_string()];
+        }
+        
+        let mut wrapped_lines = Vec::new();
+        let mut current_line = String::new();
+        
+        for word in text.split_whitespace() {
+            // If adding this word would exceed the limit
+            if !current_line.is_empty() && current_line.len() + 1 + word.len() > max_width {
+                wrapped_lines.push(current_line);
+                current_line = word.to_string();
+            } else {
+                if !current_line.is_empty() {
+                    current_line.push(' ');
+                }
+                current_line.push_str(word);
+            }
+            
+            // Handle very long words that exceed max_width
+            while current_line.len() > max_width {
+                let split_point = max_width;
+                wrapped_lines.push(current_line[..split_point].to_string());
+                current_line = current_line[split_point..].to_string();
+            }
+        }
+        
+        if !current_line.is_empty() {
+            wrapped_lines.push(current_line);
+        }
+        
+        // If input was empty, return at least one empty line
+        if wrapped_lines.is_empty() {
+            wrapped_lines.push(String::new());
+        }
+        
+        wrapped_lines
+    }
     pub fn add_error(&mut self, error: &str) {
         let error_msg = format!("Error: {}", error);
         self.add_line(error_msg);
