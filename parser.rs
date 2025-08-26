@@ -616,6 +616,11 @@ impl Parser {
                 self.advance();
                 Ok(Expr::Identifier("speed".to_string()))
             },
+            TokenType::Hits => {
+                // Allow 'hits' to be used as a function name
+                self.advance();
+                Ok(Expr::Identifier("hits".to_string()))
+            },
             TokenType::Cursor => {
                 self.advance();
                 Ok(Expr::Identifier("cursor".to_string()))

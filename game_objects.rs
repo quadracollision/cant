@@ -286,6 +286,14 @@ impl GameObjectManager {
         }
     }
     
+    pub fn get_square_name(&self, square_id: u32) -> Option<String> {
+        if let Some(GameObject::Square(square)) = self.objects.get(&square_id) {
+            Some(square.get_friendly_name())
+        } else {
+            None
+        }
+    }
+    
     pub fn get_ball_speed(&self, object_id: u32) -> Result<f64, String> {
         if let Some(GameObject::Ball(ball)) = self.objects.get(&object_id) {
             Ok(ball.speed)

@@ -678,30 +678,133 @@ impl Interpreter {
             "tilesize" => return self.call_tilesize_function(arguments),
             "font_size" => return self.call_font_size_function(arguments),
             "sample" => return self.call_sample_function(arguments),
-            "speed" => {
-                if arguments.len() != 1 {
-                    return Err(InterpreterError::RuntimeError("speed expects exactly 1 argument".to_string()));
-                }
-                
-                let object_name = match &arguments[0] {
-                    Expr::Identifier(name) => name.clone(),
-                    _ => {
-                        let target_value = self.evaluate_expression(&arguments[0])?;
-                        match target_value {
-                            Value::String(ball_name) => ball_name,
-                            _ => return Err(InterpreterError::TypeError("speed() expects a ball name as identifier".to_string())),
+            "hits" => {
+                if arguments.len() == 1 {
+                    // Original single-parameter hits() - returns total hits for an object
+                    let object_name = match &arguments[0] {
+                        Expr::Identifier(name) => name.clone(),
+                        Expr::Self_ => {
+                            if let Some(owner_id) = self.current_script_owner {
+                                if let Some(name) = self.game_objects.get_square_name(owner_id) {
+                                    name
+                                } else {
+                                    return Err(InterpreterError::RuntimeError("Script owner not found".to_string()));
+                                }
+                            } else {
+                                return Err(InterpreterError::RuntimeError("'self' used outside of script context".to_string()));
+                            }
+                        },
+                        _ => {
+                            let target_value = self.evaluate_expression(&arguments[0])?;
+                            match target_value {
+                                Value::String(obj_name) => obj_name,
+                                Value::GameObject(id) => {
+                                    if let Some(name) = self.game_objects.get_ball_name(id) {
+                                        name
+                                    } else if let Some(name) = self.game_objects.get_square_name(id) {
+                                        name
+                                    } else {
+                                        return Err(InterpreterError::RuntimeError(format!("Object with ID {} not found", id)));
+                                    }
+                                },
+                                _ => return Err(InterpreterError::TypeError("hits() expects an object name or identifier".to_string())),
+                            }
                         }
-                    }
-                };
-                
-                let object_id = self.game_objects.find_object_by_name(&object_name)
-                    .ok_or_else(|| InterpreterError::RuntimeError(format!("Object '{}' not found", object_name)))?;
-                
-                let current_speed = self.game_objects.get_ball_speed(object_id)
-                    .map_err(|e| InterpreterError::RuntimeError(e))?;
-                
-                return Ok(Value::Number(current_speed));
+                    };
+                    
+                    let object_id = self.game_objects.find_object_by_name(&object_name)
+                        .ok_or_else(|| InterpreterError::RuntimeError(format!("Object '{}' not found", object_name)))?;
+                    
+                    let total_hits = if let Some(GameObject::Ball(ball)) = self.game_objects.get_object(object_id) {
+                        ball.get_total_hits() as f64
+                    } else if let Some(GameObject::Square(square)) = self.game_objects.get_object(object_id) {
+                        square.get_total_hits() as f64
+                    } else {
+                        return Err(InterpreterError::RuntimeError(format!("Object '{}' not found", object_name)));
+                    };
+                    
+                    return Ok(Value::Number(total_hits));
+                } else if arguments.len() == 2 {
+                    // New two-parameter hits(object1, object2) - returns hit count between specific objects
+                    let mut get_object_name = |arg: &Expr| -> Result<String, InterpreterError> {
+                        match arg {
+                            Expr::Identifier(name) => Ok(name.clone()),
+                            Expr::Self_ => {
+                                if let Some(owner_id) = self.current_script_owner {
+                                    if let Some(name) = self.game_objects.get_square_name(owner_id) {
+                                        Ok(name)
+                                    } else {
+                                        Err(InterpreterError::RuntimeError("Script owner not found".to_string()))
+                                    }
+                                } else {
+                                    Err(InterpreterError::RuntimeError("'self' used outside of script context".to_string()))
+                                }
+                            },
+                            _ => {
+                                let target_value = self.evaluate_expression(arg)?;
+                                match target_value {
+                                    Value::String(obj_name) => Ok(obj_name),
+                                    Value::GameObject(id) => {
+                                        if let Some(name) = self.game_objects.get_ball_name(id) {
+                                            Ok(name)
+                                        } else if let Some(name) = self.game_objects.get_square_name(id) {
+                                            Ok(name)
+                                        } else {
+                                            Err(InterpreterError::RuntimeError(format!("Object with ID {} not found", id)))
+                                        }
+                                    },
+                                    _ => Err(InterpreterError::TypeError("hits() expects an object name or identifier".to_string())),
+                                }
+                            }
+                        }
+                    };
+                    
+                    let object1_name = get_object_name(&arguments[0])?;
+                    let object2_name = get_object_name(&arguments[1])?;
+                    
+                    let object1_id = self.game_objects.find_object_by_name(&object1_name)
+                        .ok_or_else(|| InterpreterError::RuntimeError(format!("Object '{}' not found", object1_name)))?;
+                    let object2_id = self.game_objects.find_object_by_name(&object2_name)
+                        .ok_or_else(|| InterpreterError::RuntimeError(format!("Object '{}' not found", object2_name)))?;
+                    
+                    // Get hit count from object1 hitting object2
+                    let hit_count = if let Some(GameObject::Ball(ball)) = self.game_objects.get_object(object1_id) {
+                        ball.get_hit_count(object2_id) as f64
+                    } else if let Some(GameObject::Square(square)) = self.game_objects.get_object(object1_id) {
+                        square.get_hit_count(object2_id) as f64
+                    } else {
+                        return Err(InterpreterError::RuntimeError(format!("Object '{}' not found", object1_name)));
+                    };
+                    
+                    return Ok(Value::Number(hit_count));
+                } else {
+                    return Err(InterpreterError::RuntimeError("hits expects 1 or 2 arguments".to_string()));
+                }
             },
+        "speed" => {
+            if arguments.len() != 1 {
+                return Err(InterpreterError::RuntimeError("speed expects exactly 1 argument".to_string()));
+            }
+            
+            let object_name = match &arguments[0] {
+                Expr::Identifier(name) => name.clone(),
+                _ => {
+                    let target_value = self.evaluate_expression(&arguments[0])?;
+                    match target_value {
+                        Value::String(ball_name) => ball_name,
+                        _ => return Err(InterpreterError::TypeError("speed() expects a ball name as identifier".to_string())),
+                    }
+                }
+            };
+            
+            let object_id = self.game_objects.find_object_by_name(&object_name)
+                .ok_or_else(|| InterpreterError::RuntimeError(format!("Object '{}' not found", object_name)))?;
+            
+            let current_speed = self.game_objects.get_ball_speed(object_id)
+                .map_err(|e| InterpreterError::RuntimeError(e))?;
+            
+            return Ok(Value::Number(current_speed));
+        },
             "clear" => {
                 self.grid_state = None;
                 return Ok(Value::String("Grid cleared".to_string()));
