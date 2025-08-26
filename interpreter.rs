@@ -233,9 +233,6 @@ impl Interpreter {
                     }
                 }
             }
-            
-            // Keep the existing collision detection as backup
-            self.handle_collisions();
         }
     }
 
@@ -290,6 +287,29 @@ impl Interpreter {
             },
             Stmt::If { condition, then_branch, else_branch } => {
                 let condition_value = self.evaluate_expression(condition)?;
+                
+                // Check if this is a hits condition followed by a threshold
+                if let Expr::Binary { left: _, operator: BinaryOp::Hits, right: _ } = condition {
+                    // Look ahead to see if the first statement in then_branch is a number (threshold)
+                    if let Stmt::Block(statements) = then_branch.as_ref() {
+                        if let Some(Stmt::Expression(Expr::Number(threshold))) = statements.first() {
+                            // Compare hit count with threshold
+                            if let Value::Number(hit_count) = condition_value {
+                                if hit_count >= *threshold {
+                                    // Execute the rest of the then_branch (skip the threshold number)
+                                    for stmt in statements.iter().skip(1) {
+                                        self.execute_statement(stmt)?;
+                                    }
+                                }
+                            } else if let Some(else_branch) = else_branch {
+                                self.execute_statement(else_branch)?;
+                            }
+                            return Ok(Value::Nil);
+                        }
+                    }
+                }
+                
+                // Normal if statement logic
                 if condition_value.is_truthy() {
                     self.execute_statement(then_branch)
                 } else if let Some(else_stmt) = else_branch {
@@ -597,35 +617,21 @@ impl Interpreter {
                 }
             },
             (Value::GameObject(obj1_id), Value::GameObject(obj2_id)) => {
-                match op {
-                    BinaryOp::Hits => {
-                        // Check collision count between two game objects
-                        let key = format!("hits({},{})", obj1_id, obj2_id);
-                        if let Some(Value::Number(count)) = self.environment.get(&key) {
-                            Ok(Value::Number(*count))
-                        } else {
-                            Ok(Value::Number(0.0))
-                        }
-                    },
-                    BinaryOp::Equal => Ok(Value::Boolean(obj1_id == obj2_id)),
-                    BinaryOp::NotEqual => Ok(Value::Boolean(obj1_id != obj2_id)),
-                    _ => Err(InterpreterError::TypeError("Invalid operation for game objects".to_string())),
-                }
-            },
-            (Value::GameObject(obj_id), Value::Number(expected_count)) => {
-                match op {
-                    BinaryOp::Hits => {
-                        // Check if object has hit another object the expected number of times
-                        let key = format!("hits({})", obj_id);
-                        if let Some(Value::Number(actual_count)) = self.environment.get(&key) {
-                            Ok(Value::Boolean(*actual_count >= expected_count))
-                        } else {
-                            Ok(Value::Boolean(false))
-                        }
-                    },
-                    _ => Err(InterpreterError::TypeError("Invalid operation between game object and number".to_string())),
-                }
-            },
+            match op {
+                BinaryOp::Hits => {
+                    // Return the actual hit count between two game objects
+                    let key = format!("hits({},{})", obj1_id, obj2_id);
+                    if let Some(Value::Number(count)) = self.environment.get(&key) {
+                        Ok(Value::Number(*count))
+                    } else {
+                        Ok(Value::Number(0.0))
+                    }
+                },
+                BinaryOp::Equal => Ok(Value::Boolean(obj1_id == obj2_id)),
+                BinaryOp::NotEqual => Ok(Value::Boolean(obj1_id != obj2_id)),
+                _ => Err(InterpreterError::TypeError("Invalid operation for game objects".to_string())),
+            }
+        },
             _ => Err(InterpreterError::TypeError("Type mismatch in binary operation".to_string())),
         }
     }
@@ -1494,6 +1500,8 @@ fn execute_collision_script(&mut self, id1: u32, id2: u32) {
                 // Set up script environment
                 self.environment.insert("hits".to_string(), Value::Number(total_hits as f64));
                 self.environment.insert(format!("hits({})", ball_id), Value::Number(ball_hits as f64));
+                // Add the specific ball-square hit count for proper "ball1 hits self 3" evaluation
+                self.environment.insert(format!("hits({},{})", ball_id, square_id), Value::Number(ball_hits as f64));
                 
                 // Parse and execute script commands
                 let cursor_x = self.cursor_x;
@@ -1505,6 +1513,7 @@ fn execute_collision_script(&mut self, id1: u32, id2: u32) {
                 // Clean up environment and context
                 self.environment.remove("hits");
                 self.environment.remove(&format!("hits({})", ball_id));
+                self.environment.remove(&format!("hits({},{})", ball_id, square_id));
                 self.current_script_owner = None;  // Clear script context
             }
         }

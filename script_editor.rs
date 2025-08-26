@@ -571,7 +571,7 @@ impl ScriptEditor {
             self.current_line + 1,
             self.current_col + 1
         );
-        display_lines.push(format!("[STATUS]{}", status_line));
+        display_lines.push(status_line);
         
         let start_line = self.scroll_offset;
         let end_line = (start_line + self.viewport_height).min(self.lines.len());

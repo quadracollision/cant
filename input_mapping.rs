@@ -41,6 +41,7 @@ impl InputMapper {
             VirtualKeyCode::Right => "ArrowRight".to_string(),
             
             // Ctrl combinations
+            VirtualKeyCode::S if input.modifiers.ctrl() && input.modifiers.shift() => "Ctrl+Shift+S".to_string(),
             VirtualKeyCode::S if input.modifiers.ctrl() => "Ctrl+S".to_string(),
             VirtualKeyCode::Z if input.modifiers.ctrl() => "Ctrl+Z".to_string(),
             VirtualKeyCode::Y if input.modifiers.ctrl() => "Ctrl+Y".to_string(),

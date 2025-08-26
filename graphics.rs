@@ -6,8 +6,15 @@ use crate::game_objects::{GameObjectManager, GameObject};
 
 pub const GRID_PADDING: u32 = 10;
 // Make console height scale with window size - more conservative sizing
-fn get_console_height(window_height: u32) -> u32 {
-    (window_height as f32 * 0.3).max(120.0).min(300.0) as u32 // 30% of window height, min 120px, max 300px
+fn get_console_height(window_height: u32, font_size_px: f32) -> u32 {
+    // Fixed console height calculation for exactly 6 lines + padding
+    let font_scale = font_size_px / 14.0;
+    let line_height = crate::font::get_line_height(font_scale);
+    let padding = (10.0 * font_scale).max(8.0) as usize;
+    
+    // Calculate height for exactly 6 lines (5 history + 1 command line) + padding
+    let console_height = (6 * line_height) + (padding * 2);
+    console_height as u32
 }
 
 pub struct GraphicsRenderer {
@@ -94,7 +101,7 @@ impl GraphicsRenderer {
             Self::render_grid_static(
                 frame, grid, self.width, self.height, 
                 self.grid_width, self.grid_height, 
-                self.cursor_x, self.cursor_y, self.tile_size
+                self.cursor_x, self.cursor_y, self.tile_size, self.font_size
             );
         }
         
@@ -102,7 +109,7 @@ impl GraphicsRenderer {
         if let Some(objects) = game_objects {
             Self::render_game_objects_static(
                 frame, objects, self.width, self.height, 
-                self.grid_width, self.grid_height, self.tile_size
+                self.grid_width, self.grid_height, self.tile_size, self.font_size
             );
         }
         
@@ -111,7 +118,7 @@ impl GraphicsRenderer {
             Self::render_cursor_overlay(
                 frame, self.width, self.height,
                 self.grid_width, self.grid_height,
-                self.cursor_x, self.cursor_y, self.tile_size
+                self.cursor_x, self.cursor_y, self.tile_size, self.font_size
             );
         }
         
@@ -139,10 +146,10 @@ impl GraphicsRenderer {
         }
     }
 
-    fn render_game_objects_static(frame: &mut [u8], objects: &GameObjectManager, width: u32, height: u32, grid_width: u32, grid_height: u32, tile_size: u32) {
+    fn render_game_objects_static(frame: &mut [u8], objects: &GameObjectManager, width: u32, height: u32, grid_width: u32, grid_height: u32, tile_size: u32, font_size_px: f32) {
         // Calculate the same dynamic tile size as the grid rendering
         let available_width = width.saturating_sub(GRID_PADDING * 2);
-        let available_height = height.saturating_sub(get_console_height(height) + GRID_PADDING * 2);
+        let available_height = height.saturating_sub(get_console_height(height, font_size_px) + GRID_PADDING * 2);
         
         // Use the EXACT same logic as render_grid_static - no fallback values!
         let max_tile_width = if grid_width > 0 { available_width / grid_width } else { tile_size };
@@ -330,11 +337,12 @@ impl GraphicsRenderer {
         grid_height: u32, 
         cursor_x: u32,
         cursor_y: u32,
-        tile_size: u32
+        tile_size: u32,
+        font_size_px: f32
     ) {
         // Calculate available space (excluding console area)
         let available_width = width.saturating_sub(GRID_PADDING * 2);
-        let available_height = height.saturating_sub(get_console_height(height) + GRID_PADDING * 2);
+        let available_height = height.saturating_sub(get_console_height(height, font_size_px) + GRID_PADDING * 2);
         
         // Calculate optimal tile size to fit the grid in available space
         let max_tile_width = if grid_width > 0 { available_width / grid_width } else { tile_size };
@@ -443,7 +451,7 @@ impl GraphicsRenderer {
     }
 
     fn render_console_static(frame: &mut [u8], lines: &[String], width: u32, height: u32, font_size_px: f32) {
-        let console_height = get_console_height(height);
+        let console_height = get_console_height(height, font_size_px);
         let console_start_y = height - console_height;
         
         // Convert pixel size to scale factor (base font size is 14.0px)
@@ -469,47 +477,62 @@ impl GraphicsRenderer {
         let text_color = [200, 200, 200]; // Light gray text
         let start_x = padding;
         
-        // Calculate available lines in console area
-        let available_height = console_height as usize - (padding * 2);
-        let max_lines = if line_height > 0 {
-            available_height / line_height
-        } else {
-            1
-        };
-        
-        // Ensure we have at least 6 lines minimum
-        let max_lines = max_lines.max(6);
+        // Fixed: Always display exactly 6 lines (5 history + 1 command)
+        let max_history_lines = 5;
         
         if !lines.is_empty() {
-            // Separate the command line (last line) from history lines
-            let (history_lines, command_line) = if lines.len() > 0 {
+            // Check if this is script editor content (starts with "Script:")
+            let is_script_editor = lines.first().map_or(false, |line| line.starts_with("Script:"));
+            
+            // Separate the last line as the command line
+            let (history_lines, command_line) = if lines.len() > 1 {
                 (&lines[..lines.len()-1], &lines[lines.len()-1])
             } else {
-                (&lines[..], &String::new()) // Fixed: use &String::new() instead of ""
+                (&[][..], &lines[0])
             };
             
-            // Position command line at the bottom of console
-            let command_y = console_start_y as usize + console_height as usize - padding - line_height;
-            crate::font::draw_text_scaled(frame, command_line, start_x, command_y, text_color, false, width as usize, font_scale);
-            
-            // Calculate how many history lines we can show above the command line
-            let available_history_lines = max_lines.saturating_sub(1); // Reserve one line for command
-            
-            // Show the most recent history lines that fit, working backwards from command line
-            let display_history = if history_lines.len() > available_history_lines {
-                &history_lines[history_lines.len() - available_history_lines..]
+            // Calculate command line position (moved down by 20 pixels for regular console)
+            let command_y = if is_script_editor {
+                console_start_y + console_height - padding as u32 - line_height as u32
             } else {
-                history_lines
+                console_start_y + console_height - padding as u32 - line_height as u32 + 20
             };
             
-            // Render history lines from bottom up (above the command line)
-            for (i, line) in display_history.iter().enumerate() {
-                let line_index_from_bottom = display_history.len() - 1 - i;
-                let text_y = command_y - ((line_index_from_bottom + 1) * line_height);
+            // Render command line
+            crate::font::draw_text_scaled(
+                frame,
+                command_line,
+                start_x,
+                command_y as usize,
+                text_color,
+                false,
+                width as usize,
+                font_scale,
+            );
+            
+            // Render history lines (from bottom up, above command line)
+            let available_history_lines = history_lines.len().min(max_history_lines);
+            let start_history_index = if history_lines.len() > max_history_lines {
+                history_lines.len() - max_history_lines
+            } else {
+                0
+            };
+            
+            for (i, line) in history_lines[start_history_index..].iter().enumerate() {
+                let line_y = command_y - ((available_history_lines - i) as u32 * line_height as u32);
                 
-                // Make sure text fits within console bounds
-                if text_y >= console_start_y as usize + padding {
-                    crate::font::draw_text_scaled(frame, line, start_x, text_y, text_color, false, width as usize, font_scale);
+                // Only render if within console bounds
+                if line_y >= console_start_y {
+                    crate::font::draw_text_scaled(
+                        frame,
+                        line,
+                        start_x,
+                        line_y as usize,
+                        text_color,
+                        false,
+                        width as usize,
+                        font_scale,
+                    );
                 }
             }
         }
@@ -523,48 +546,49 @@ impl GraphicsRenderer {
         grid_height: u32,
         cursor_x: u32,
         cursor_y: u32,
-        tile_size: u32
+        tile_size: u32,
+        font_size_px: f32
     ) {
-        // Calculate the same positioning as in render_grid_static
+        // Calculate available space (excluding console area) - same as grid rendering
         let available_width = width.saturating_sub(GRID_PADDING * 2);
-        let available_height = height.saturating_sub(get_console_height(height) + GRID_PADDING * 2);
+        let available_height = height.saturating_sub(get_console_height(height, font_size_px) + GRID_PADDING * 2);
         
+        // Calculate optimal tile size to fit the grid in available space - same as grid rendering
         let max_tile_width = if grid_width > 0 { available_width / grid_width } else { tile_size };
         let max_tile_height = if grid_height > 0 { available_height / grid_height } else { tile_size };
-        let dynamic_tile_size = max_tile_width.min(max_tile_height).max(1);
+        let dynamic_tile_size = max_tile_width.min(max_tile_height).max(1); // Ensure minimum size of 1
         
         let grid_pixel_width = grid_width * dynamic_tile_size;
         let grid_pixel_height = grid_height * dynamic_tile_size;
         
+        // Center the grid in the available space - same as grid rendering
         let start_x = GRID_PADDING + (available_width.saturating_sub(grid_pixel_width)) / 2;
         let start_y = GRID_PADDING + (available_height.saturating_sub(grid_pixel_height)) / 2;
         
-        // Draw cursor outline on top of everything
-        let cursor_cell_x = start_x + cursor_x * dynamic_tile_size;
-        let cursor_cell_y = start_y + cursor_y * dynamic_tile_size;
-        Self::draw_cell_outline_static(frame, cursor_cell_x, cursor_cell_y, [255, 255, 0, 255], width, height, dynamic_tile_size);
+        // Use dynamic tile size for cursor positioning
+        let cursor_pixel_x = start_x + cursor_x * dynamic_tile_size;
+        let cursor_pixel_y = start_y + cursor_y * dynamic_tile_size;
+        
+        Self::draw_cell_outline_static(frame, cursor_pixel_x, cursor_pixel_y, [255, 255, 0, 255], width, height, dynamic_tile_size);
     }
 }
 
 fn draw_text_on_square(frame: &mut [u8], x: u32, y: u32, text: &str, width: u32, height: u32, tile_size: u32) {
-    let lines: Vec<&str> = text.split('\n').collect();
+    let font_scale = (tile_size as f32 / 32.0).max(0.5);
+    let char_width = (8.0 * font_scale) as u32;
+    let char_height = (12.0 * font_scale) as u32;
     
-    // Calculate font scale based on tile size with better scaling
-    let font_scale = (tile_size as f32 / 40.0).max(0.4).min(2.0); // Better scaling range
-    let (char_width, char_height) = crate::font::get_char_dimensions(font_scale);
-    let line_spacing = crate::font::get_line_height(font_scale);
-    let text_color = [255, 255, 255]; // White text
+    let text_x = x + (tile_size - char_width * text.len() as u32) / 2;
+    let text_y = y + (tile_size - char_height) / 2;
     
-    for (line_idx, line) in lines.iter().enumerate() {
-        let line_y = y + (line_idx as u32 * line_spacing as u32);
-        let line_x = x + (3.0 * font_scale).max(2.0) as u32; // Scaled padding from square edge
-        
-        // Ensure text fits within the square bounds with some margin
-        let margin = (2.0 * font_scale) as u32;
-        if line_y + char_height as u32 <= y + tile_size - margin && 
-           line_x + (line.len() as u32 * char_width as u32) <= x + tile_size - margin {
-            crate::font::draw_text_scaled(frame, line, line_x as usize, line_y as usize, text_color, false, width as usize, font_scale);
-        }
-    }
+    crate::font::draw_text_scaled(
+        frame,
+        text,
+        text_x as usize,
+        text_y as usize,
+        [255, 255, 255],
+        false,
+        width as usize,
+        font_scale,
+    );
 }
-

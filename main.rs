@@ -17,9 +17,10 @@ mod script_editor;
 mod input_mapping; // Add this line
 
 use winit::{
-    event::{Event, WindowEvent, KeyboardInput},
+    event::{Event, WindowEvent, KeyboardInput, MouseButton, ElementState},
     event_loop::{EventLoop, ControlFlow},
     window::WindowBuilder,
+    dpi::PhysicalPosition,
 };
 use std::time::Instant;
 
@@ -52,7 +53,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     let mut last_update = Instant::now();
     let mut redraw_requested = false;
-    let mut input_mapper = InputMapper::new(); // Add this line
+    let mut input_mapper = InputMapper::new();
+    let mut mouse_position: PhysicalPosition<f64> = PhysicalPosition::new(0.0, 0.0);
     
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
@@ -65,6 +67,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     WindowEvent::Resized(size) => {
                         graphics.resize(size.width, size.height);
+                        redraw_requested = true;
+                    }
+                    WindowEvent::CursorMoved { position, .. } => {
+                        mouse_position = position;
+                    }
+                    WindowEvent::MouseInput { 
+                        state: ElementState::Pressed,
+                        button: MouseButton::Left,
+                        ..
+                    } => {
+                        console.add_output(&format!("Click coordinates: ({:.0}, {:.0})", mouse_position.x, mouse_position.y));
                         redraw_requested = true;
                     }
                     WindowEvent::KeyboardInput { input, .. } => {

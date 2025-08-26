@@ -28,6 +28,7 @@ pub enum Expr {
         name: String,
         value: Box<Expr>,
     },
+    // Remove HitsThreshold variant
 }
 
 #[derive(Debug, Clone)]
@@ -191,6 +192,7 @@ impl fmt::Display for Expr {
             Expr::Assignment { name, value } => {
                 write!(f, "{} = {}", name, value)
             },
+            // Remove this entire HitsThreshold match arm (lines 195-197)
         }
     }
 }
