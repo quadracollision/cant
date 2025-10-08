@@ -14,6 +14,7 @@ mod physics_engine;
 mod game_state;
 mod audio_engine;
 mod script_editor;
+mod waveform_editor;
 mod input_mapping; // Add this line
 
 use winit::{
@@ -33,6 +34,29 @@ use crate::input_mapping::InputMapper; // Add this line
 const WIDTH: u32 = 500;
 const HEIGHT: u32 = 500;
 
+// Helper function to copy audio files to the samples directory
+fn copy_audio_file_to_samples(source_path: &str) -> Result<String, Box<dyn std::error::Error>> {
+    use std::path::Path;
+    use std::fs;
+    
+    let source = Path::new(source_path);
+    
+    // Get the filename from the source path
+    let filename = source.file_name()
+        .ok_or("Invalid file path")?
+        .to_str()
+        .ok_or("Invalid filename")?;
+    
+    // Create the destination path in the samples directory
+    let dest_path = format!("samples/{}", filename);
+    let dest = Path::new(&dest_path);
+    
+    // Copy the file
+    fs::copy(source, dest)?;
+    
+    Ok(dest_path)
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
     
@@ -45,6 +69,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut graphics = GraphicsRenderer::new(&window, WIDTH, HEIGHT)?;
     let mut interpreter = Interpreter::new();
+    
+    // Waveform editor state - track if we're in waveform mode and store audio data
+    let mut waveform_editor: Option<crate::waveform_editor::WaveformEditor> = None;
+    let mut waveform_mode = false;
+    let mut waveform_audio_samples: Vec<f32> = Vec::new();
+    let mut waveform_filename: Option<String> = None;
     
     // No initial grid setup - wait for user to call grid(x, y)
     
@@ -81,8 +111,57 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         redraw_requested = true;
                     }
                     WindowEvent::KeyboardInput { input, .. } => {
-                        // Check if script editor is active first
-                        if interpreter.is_script_editor_active() {
+                        // Check if waveform editor is active first
+                        if waveform_mode {
+                            // Handle integrated waveform mode input
+                            if let Some(key_code) = input.virtual_keycode {
+                                if input.state == winit::event::ElementState::Pressed {
+                                    match key_code {
+                                        winit::event::VirtualKeyCode::Escape => {
+                                            waveform_mode = false;
+                                            waveform_editor = None;
+                                            console.add_output("Waveform editor closed");
+                                            redraw_requested = true;
+                                        }
+                                        winit::event::VirtualKeyCode::Space => {
+                                            // Add slice marker at cursor position
+                                            if let Some(ref mut editor) = waveform_editor {
+                                                // Get cursor position from graphics module and sync it with waveform editor
+                                                let (cursor_pos, _, _) = graphics.get_waveform_state();
+                                                editor.set_cursor_position(cursor_pos);
+                                                editor.add_slice_marker();
+                                                let message = format!("Slice marker added at position: {}", cursor_pos);
+                                                console.add_output(&message);
+                                                redraw_requested = true;
+                                            } else {
+                                                console.add_output("No waveform editor available");
+                                                redraw_requested = true;
+                                            }
+                                        }
+                                        _ => {
+                                            // Delegate waveform input handling to graphics module
+                                            if let Some(message) = graphics.handle_waveform_input(key_code, &waveform_audio_samples) {
+                                                console.add_output(&message);
+                                                redraw_requested = true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // Check if file selection mode is active
+                        else if interpreter.is_file_selection_mode() {
+                            if let Some(key_code) = input.virtual_keycode {
+                                if input.state == winit::event::ElementState::Pressed {
+                                    if let Some(message) = interpreter.handle_file_selection_input(key_code) {
+                                        console.add_output(&message);
+                                        redraw_requested = true;
+                                    }
+                                }
+                            }
+                        }
+                        // Check if script editor is active
+                        else if interpreter.is_script_editor_active() {
                             // Handle script editor input
                             let key_str = input_mapper.map_script_editor_key(&input);
                             
@@ -198,6 +277,65 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     redraw_requested = true;
                 }
                 
+                // Check if waveform mode is requested
+                if interpreter.is_waveform_mode_requested() && !waveform_mode {
+                    let file_path = interpreter.get_waveform_file_path();
+                    console.add_output(&format!("Activating waveform editor for: {:?}", file_path));
+                    
+                    // Store the filename for display
+                    waveform_filename = file_path.clone();
+                    
+                    // Load audio samples if file path is provided
+                    if let Some(path) = &file_path {
+                        // Copy file to samples directory and get local path
+                        match copy_audio_file_to_samples(path) {
+                            Ok(local_path) => {
+                                console.add_output(&format!("Copied audio file to: {}", local_path));
+                                match crate::waveform_editor::WaveformEditor::load_samples_from_file(&local_path) {
+                                    Ok(samples) => {
+                                        waveform_audio_samples = samples;
+                                        console.add_output(&format!("Loaded {} audio samples", waveform_audio_samples.len()));
+                                    }
+                                    Err(e) => {
+                                        console.add_output(&format!("Failed to load audio file: {}", e));
+                                        waveform_audio_samples.clear();
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                console.add_output(&format!("Failed to copy audio file: {}", e));
+                                // Try loading from original path as fallback
+                                match crate::waveform_editor::WaveformEditor::load_samples_from_file(path) {
+                                    Ok(samples) => {
+                                        waveform_audio_samples = samples;
+                                        console.add_output(&format!("Loaded {} audio samples from original path", waveform_audio_samples.len()));
+                                    }
+                                    Err(e) => {
+                                        console.add_output(&format!("Failed to load audio file: {}", e));
+                                        waveform_audio_samples.clear();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    waveform_mode = true;
+                    
+                    // Initialize waveform editor with loaded samples
+                    if !waveform_audio_samples.is_empty() {
+                        waveform_editor = Some(crate::waveform_editor::WaveformEditor::new_integrated());
+                        if let Some(ref mut editor) = waveform_editor {
+                            editor.load_audio(waveform_audio_samples.clone());
+                        }
+                        console.add_output("Waveform mode activated (integrated mode) with editor");
+                    } else {
+                        console.add_output("Waveform mode activated (integrated mode) - no audio loaded");
+                    }
+                    
+                    interpreter.clear_waveform_request();
+                    redraw_requested = true;
+                }
+                
                 // Check if graphics need updating after script execution
                 if interpreter.needs_graphics_update() {
                     if let Some(grid_state) = interpreter.get_grid_state() {
@@ -212,14 +350,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 
                 if redraw_requested {
+                    // Check if waveform editor is active
+                    if waveform_mode {
+                        let display_lines = console.get_display_lines(6);
+                        graphics.render_waveform_mode(&display_lines, &waveform_audio_samples);
+                        
+                        // Render filename in top left if available
+                        if let Some(ref filename) = waveform_filename {
+                            graphics.render_waveform_filename(filename);
+                        }
+                        
+                        // Render slice markers if waveform editor exists
+                        if let Some(ref editor) = waveform_editor {
+                            let slice_markers = editor.get_slice_markers();
+                            let (_, zoom_level, scroll_position) = graphics.get_waveform_state();
+                            graphics.render_slice_markers(slice_markers, zoom_level, scroll_position, &waveform_audio_samples);
+                        }
+                    }
+                    // Check if file selection mode is active
+                    else if interpreter.is_file_selection_mode() {
+                        let display_lines = interpreter.get_file_selection_display_lines();
+                        graphics.render(interpreter.get_grid_state(), &display_lines, Some(interpreter.get_game_objects()));
+                    }
                     // Check if script editor is active
-                    let display_lines = if interpreter.is_script_editor_active() {
-                        interpreter.get_script_editor_display_lines()
+                    else if interpreter.is_script_editor_active() {
+                        let display_lines = interpreter.get_script_editor_display_lines();
+                        graphics.render(interpreter.get_grid_state(), &display_lines, Some(interpreter.get_game_objects()));
                     } else {
-                        console.get_display_lines(6)  // Reduced from 10 to 6 to account for input line
-                    };
-                    
-                    graphics.render(interpreter.get_grid_state(), &display_lines, Some(interpreter.get_game_objects()));
+                        let display_lines = console.get_display_lines(6);  // Reduced from 10 to 6 to account for input line
+                        graphics.render(interpreter.get_grid_state(), &display_lines, Some(interpreter.get_game_objects()));
+                    }
                     
                     if let Err(err) = graphics.present() {
                         log::error!("Render error: {}", err);

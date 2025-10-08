@@ -64,6 +64,10 @@ impl Parser {
             self.script_statement()
         } else if self.match_token(&TokenType::Run) {
             self.run_statement()
+        } else if self.match_token(&TokenType::Slice) {
+            self.slice_statement()
+        } else if self.match_token(&TokenType::Waveform) {
+            self.waveform_statement()
         } else {
             self.expression_statement()
         }
@@ -881,6 +885,119 @@ impl Parser {
         
         self.consume_newline_or_semicolon()?;
         Ok(Stmt::Run { script_name })
+    }
+    
+    fn slice_statement(&mut self) -> Result<Stmt, ParseError> {
+        let mut sequence = Vec::new();
+        
+        // Parse the sequence of numbers
+        while !self.check(&TokenType::Newline) && !self.check(&TokenType::Semicolon) && !self.is_at_end() {
+            if let TokenType::Number(n) = &self.peek().token_type {
+                sequence.push(*n);
+                self.advance();
+            } else {
+                return Err(ParseError::Expected {
+                    expected: "number".to_string(),
+                    found: self.peek().clone(),
+                    message: "Expected number in slice sequence".to_string(),
+                });
+            }
+        }
+        
+        if sequence.is_empty() {
+            return Err(ParseError::Expected {
+                expected: "slice sequence".to_string(),
+                found: self.peek().clone(),
+                message: "Slice command requires at least one number".to_string(),
+            });
+        }
+        
+        self.consume_newline_or_semicolon()?;
+        Ok(Stmt::Slice { sequence })
+    }
+
+    fn waveform_statement(&mut self) -> Result<Stmt, ParseError> {
+        let file_path = if self.check(&TokenType::LeftParen) {
+            // Handle function-like syntax: waveform(filename)
+            self.advance(); // consume '('
+            
+            let path = if self.check(&TokenType::String("".to_string())) {
+                if let TokenType::String(path) = &self.advance().token_type {
+                    Some(path.clone())
+                } else {
+                    None
+                }
+            } else if self.check(&TokenType::Identifier("".to_string())) {
+                // Handle identifier without quotes: waveform(test.wav)
+                // Need to handle filenames with dots like test.wav
+                let mut filename = String::new();
+                
+                if let TokenType::Identifier(name) = &self.advance().token_type {
+                    filename.push_str(name);
+                }
+                
+                // Check for dot and extension pattern
+                while self.check(&TokenType::Dot) {
+                    self.advance(); // consume dot
+                    filename.push('.');
+                    
+                    if self.check(&TokenType::Identifier("".to_string())) {
+                        if let TokenType::Identifier(ext) = &self.advance().token_type {
+                            filename.push_str(ext);
+                        }
+                    }
+                }
+                
+                if !filename.is_empty() {
+                    Some(filename)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            
+            self.consume(&TokenType::RightParen, "Expected ')' after waveform file path")?;
+            path
+        } else if self.check(&TokenType::String("".to_string())) {
+            // Handle direct string syntax: waveform "filename"
+            if let TokenType::String(path) = &self.advance().token_type {
+                Some(path.clone())
+            } else {
+                None
+            }
+        } else if self.check(&TokenType::Identifier("".to_string())) {
+            // Handle direct identifier syntax: waveform test.wav
+            let mut filename = String::new();
+            
+            if let TokenType::Identifier(name) = &self.advance().token_type {
+                filename.push_str(name);
+            }
+            
+            // Check for dot and extension pattern
+            while self.check(&TokenType::Dot) {
+                self.advance(); // consume dot
+                filename.push('.');
+                
+                if self.check(&TokenType::Identifier("".to_string())) {
+                    if let TokenType::Identifier(ext) = &self.advance().token_type {
+                        filename.push_str(ext);
+                    }
+                }
+            }
+            
+            if !filename.is_empty() {
+                Some(filename)
+            } else {
+                None
+            }
+        } else {
+            // Handle bare waveform command
+            None
+        };
+        
+        self.consume_newline_or_semicolon()?;
+        Ok(Stmt::Waveform { file_path })
     }
 
     fn parse_implicit_block(&mut self) -> Result<Vec<Stmt>, ParseError> {

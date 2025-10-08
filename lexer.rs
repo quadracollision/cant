@@ -34,6 +34,8 @@ pub enum TokenType {
     Hits,       // New: for "hits" operator
     Verbose,    // New: for "verbose" command
     Run,        // New: for "run" command
+    Slice,      // New: for "slice" command
+    Waveform,   // New: for "waveform" command
     
     // Direction keywords
     Left,
@@ -331,6 +333,8 @@ impl Lexer {
             "self" => TokenType::Self_,
             "hits" => TokenType::Hits,
             "verbose" => TokenType::Verbose,
+            "slice" => TokenType::Slice,
+                "waveform" => TokenType::Waveform,
             "left" => TokenType::Left,
             "right" => TokenType::Right,
             "up" => TokenType::Up,

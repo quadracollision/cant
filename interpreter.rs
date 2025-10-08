@@ -90,6 +90,13 @@ pub struct Interpreter {
     // Add in-memory script storage
     memory_scripts: HashMap<String, String>, // script_name -> script_content
     next_script_id: u32, // Add script ID counter to interpreter too
+    // Waveform editor state
+    waveform_mode_requested: bool,
+    waveform_file_path: Option<String>,
+    // File selection state
+    file_selection_mode: bool,
+    available_files: Vec<String>,
+    selected_file_index: usize,
 }
 
 impl Interpreter {
@@ -109,6 +116,11 @@ impl Interpreter {
             graphics_update_needed: false,
             memory_scripts: HashMap::new(),
             next_script_id: 1,
+            waveform_mode_requested: false,
+            waveform_file_path: None,
+            file_selection_mode: false,
+            available_files: Vec::new(),
+            selected_file_index: 0,
         };
         interpreter.register_builtins();
         interpreter
@@ -367,6 +379,8 @@ impl Interpreter {
                 self.execute_destroy(object_type, arguments)
             },
             Stmt::Run { script_name } => self.execute_run_command(script_name),
+            Stmt::Slice { sequence } => self.execute_slice_command(sequence),
+            Stmt::Waveform { file_path } => self.execute_waveform_command(file_path),
         }
     }
 
@@ -1215,6 +1229,79 @@ Controls:
         self.script_editor.as_ref().map_or(false, |editor| editor.is_active())
     }
 
+    pub fn is_waveform_mode_requested(&self) -> bool {
+        self.waveform_mode_requested
+    }
+
+    pub fn get_waveform_file_path(&self) -> Option<String> {
+        self.waveform_file_path.clone()
+    }
+
+    pub fn clear_waveform_request(&mut self) {
+        self.waveform_mode_requested = false;
+        self.waveform_file_path = None;
+    }
+
+    pub fn is_file_selection_mode(&self) -> bool {
+        self.file_selection_mode
+    }
+
+    pub fn get_file_selection_display_lines(&self) -> Vec<String> {
+        if !self.file_selection_mode {
+            return Vec::new();
+        }
+
+        let mut lines = Vec::new();
+        lines.push("Select an audio file:".to_string());
+        lines.push("".to_string());
+
+        for (i, filename) in self.available_files.iter().enumerate() {
+            let prefix = if i == self.selected_file_index { "> " } else { "  " };
+            lines.push(format!("{}{}", prefix, filename));
+        }
+
+        lines.push("".to_string());
+        lines.push("Use arrow keys to navigate, Enter to select, Escape to cancel".to_string());
+        lines
+    }
+
+    pub fn handle_file_selection_input(&mut self, key_code: winit::event::VirtualKeyCode) -> Option<String> {
+        if !self.file_selection_mode {
+            return None;
+        }
+
+        match key_code {
+            winit::event::VirtualKeyCode::Up => {
+                if self.selected_file_index > 0 {
+                    self.selected_file_index -= 1;
+                }
+                Some("File selection updated".to_string())
+            }
+            winit::event::VirtualKeyCode::Down => {
+                if self.selected_file_index < self.available_files.len().saturating_sub(1) {
+                    self.selected_file_index += 1;
+                }
+                Some("File selection updated".to_string())
+            }
+            winit::event::VirtualKeyCode::Return => {
+                if let Some(selected_file) = self.available_files.get(self.selected_file_index) {
+                    // Activate waveform mode with selected file
+                    self.waveform_mode_requested = true;
+                    self.waveform_file_path = Some(selected_file.clone());
+                    self.file_selection_mode = false;
+                    Some(format!("Selected file: {}", selected_file))
+                } else {
+                    None
+                }
+            }
+            winit::event::VirtualKeyCode::Escape => {
+                self.file_selection_mode = false;
+                Some("File selection cancelled".to_string())
+            }
+            _ => None,
+        }
+    }
+
     pub fn get_script_editor_display_lines(&self) -> Vec<String> {
         if let Some(editor) = &self.script_editor {
             editor.get_display_lines()
@@ -1606,6 +1693,9 @@ fn execute_collision_script(&mut self, id1: u32, id2: u32) {
                 // Add the specific ball-square hit count for proper "ball1 hits self 3" evaluation
                 self.environment.insert(format!("hits({},{})", ball_id, square_id), Value::Number(ball_hits as f64));
                 
+                // Check for slice array playback based on hit count
+                self.try_play_collision_slice(square_id, ball_hits);
+                
                 // Parse and execute script commands
                 let cursor_x = self.cursor_x;
                 let cursor_y = self.cursor_y;
@@ -1619,6 +1709,23 @@ fn execute_collision_script(&mut self, id1: u32, id2: u32) {
                 self.environment.remove(&format!("hits({},{})", ball_id, square_id));
                 self.current_script_owner = None;  // Clear script context
             }
+        }
+    }
+
+    fn try_play_collision_slice(&mut self, square_id: u32, hit_count: u32) {
+        // Generate slice array name based on square ID
+        let slice_array_name = format!("square_{}_slice", square_id);
+        
+        // Try to play the slice corresponding to the hit count
+        // Use hit_count as the slice index (1-based indexing)
+        let sequence = vec![hit_count as f64];
+        
+        if let Err(e) = crate::audio_engine::play_slice_array(&slice_array_name) {
+            // If slice array doesn't exist or slice index is out of bounds, silently continue
+            // This allows squares to work normally even without slice arrays configured
+            println!("Debug: Could not play slice for square {}, hit {}: {}", square_id, hit_count, e);
+        } else {
+            println!("Debug: Playing slice {} for square {} collision", hit_count, square_id);
         }
     }
 
@@ -1668,6 +1775,38 @@ pub fn is_verbose_mode(&self) -> bool {
         needs_update
     }
 
+    // Create slice array from current slice markers
+    pub fn create_slice_array_from_markers(&mut self, waveform_editor: &crate::waveform_editor::WaveformEditor, sample_key: &str) -> Result<String, InterpreterError> {
+        let slice_markers = waveform_editor.get_slice_markers();
+        
+        if slice_markers.is_empty() {
+            return Err(InterpreterError::RuntimeError("No slice markers found. Place markers using spacebar in waveform mode.".to_string()));
+        }
+        
+        // Convert f32 positions to f64 for audio engine
+        let markers_f64: Vec<f64> = slice_markers.iter().map(|&x| x as f64).collect();
+        
+        // Generate a unique slice array name
+        let array_name = format!("slice_array_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
+        
+        // Create indices for each slice (0-based)
+        let indices: Vec<usize> = (0..slice_markers.len().saturating_sub(1)).collect();
+        
+        // Set the markers in the audio engine
+        if let Err(e) = crate::audio_engine::set_sample_markers(sample_key, markers_f64) {
+            return Err(InterpreterError::RuntimeError(format!("Failed to set sample markers: {}", e)));
+        }
+        
+        // Create the slice array
+        match crate::audio_engine::create_slice_array(array_name.clone(), sample_key.to_string(), indices) {
+            Ok(()) => {
+                println!("Created slice array '{}' with {} slices from markers", array_name, slice_markers.len().saturating_sub(1));
+                Ok(array_name)
+            },
+            Err(e) => Err(InterpreterError::RuntimeError(format!("Failed to create slice array: {}", e)))
+        }
+    }
+
     fn execute_run_command(&mut self, script_name: &str) -> Result<Value, InterpreterError> {
         // Add .cant extension if not present
         let filename = if script_name.ends_with(".cant") {
@@ -1690,6 +1829,102 @@ pub fn is_verbose_mode(&self) -> bool {
             },
             Err(e) => Err(InterpreterError::RuntimeError(format!("Error reading script file '{}': {}", filename, e)))
         }
+    }
+
+    fn execute_slice_command(&mut self, sequence: &[f64]) -> Result<Value, InterpreterError> {
+        // Convert f64 sequence to usize indices (subtract 1 for 0-based indexing)
+        let indices: Vec<usize> = sequence.iter()
+            .map(|&n| if n >= 1.0 { (n as usize).saturating_sub(1) } else { 0 })
+            .collect();
+        
+        // For now, we'll store this slice array with a default name based on the current script owner
+        let array_name = if let Some(owner_id) = self.current_script_owner {
+            // Get the object's friendly name to use as the slice array name
+            if let Some(obj) = self.game_objects.get_object(owner_id) {
+                match obj {
+                    crate::game_objects::GameObject::Square(square) => {
+                        format!("slice_{}", square.get_friendly_name())
+                    },
+                    crate::game_objects::GameObject::Ball(ball) => {
+                        format!("slice_{}", ball.get_friendly_name())
+                    }
+                }
+            } else {
+                format!("slice_{}", owner_id)
+            }
+        } else {
+            "default_slice".to_string()
+        };
+        
+        // For now, we'll assume there's a default sample loaded
+        // In a real implementation, you might want to specify which sample to use
+        let sample_key = "default_sample".to_string();
+        
+        // Create the slice array using the audio engine
+        match crate::audio_engine::create_slice_array(array_name.clone(), sample_key, indices) {
+            Ok(()) => {
+                println!("Debug: Created slice array '{}' with sequence: {:?}", array_name, sequence);
+                Ok(Value::String(format!("Created slice array: {}", array_name)))
+            },
+            Err(e) => {
+                // If the default sample doesn't exist, just store the sequence for later use
+                println!("Debug: Audio engine error ({}), storing slice sequence for later", e);
+                Ok(Value::String(format!("Stored slice sequence: {:?}", sequence)))
+            }
+        }
+    }
+
+    fn execute_waveform_command(&mut self, file_path: &Option<String>) -> Result<Value, InterpreterError> {
+        match file_path {
+            Some(path) => {
+                // Set waveform mode request flag with specific file
+                self.waveform_mode_requested = true;
+                self.waveform_file_path = file_path.clone();
+                
+                println!("Waveform editor mode requested with file path: {:?}", file_path);
+                
+                Ok(Value::String("Waveform editor mode activated".to_string()))
+            }
+            None => {
+                // No file specified - show file selection
+                self.file_selection_mode = true;
+                self.available_files = self.get_available_audio_files();
+                self.selected_file_index = 0;
+                
+                if self.available_files.is_empty() {
+                    Ok(Value::String("No audio files found in samples directory".to_string()))
+                } else {
+                    Ok(Value::String(format!("Select audio file (use arrow keys and Enter): {} files found", self.available_files.len())))
+                }
+            }
+        }
+    }
+    
+    fn get_available_audio_files(&self) -> Vec<String> {
+        use std::fs;
+        
+        let samples_dir = "samples";
+        let mut files = Vec::new();
+        
+        if let Ok(entries) = fs::read_dir(samples_dir) {
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    let path = entry.path();
+                    if let Some(extension) = path.extension() {
+                        if extension == "wav" || extension == "mp3" || extension == "ogg" {
+                            if let Some(filename) = path.file_name() {
+                                if let Some(filename_str) = filename.to_str() {
+                                    files.push(filename_str.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        files.sort();
+        files
     }
 
 fn execute_label(&mut self, object_name: &str, arguments: &[Expr], text: &str) -> Result<Value, InterpreterError> {

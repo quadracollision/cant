@@ -115,6 +115,12 @@ pub enum Stmt {
     Run {         // New: run script file command
         script_name: String,
     },
+    Slice {       // New: slice array command
+        sequence: Vec<f64>, // The sequence of marker numbers
+    },
+    Waveform {    // New: waveform editor command
+        file_path: Option<String>, // Optional audio file path
+    },
 }
 
 #[derive(Debug, Clone)]

@@ -271,7 +271,20 @@ impl GameObjectManager {
     
     pub fn load_audio_into_ball(&mut self, ball_id: u32, file_path: &str) -> Result<(), crate::audio_engine::AudioError> {
         if let Some(GameObject::Ball(ball)) = self.objects.get_mut(&ball_id) {
-            ball.load_audio_file(file_path)?;
+            // First, try to copy the file to the samples directory
+            let local_path = match copy_audio_file_to_samples(file_path) {
+                Ok(path) => {
+                    println!("Copied audio file to: {}", path);
+                    path
+                },
+                Err(e) => {
+                    println!("Failed to copy audio file: {}", e);
+                    // Fall back to original path
+                    file_path.to_string()
+                }
+            };
+            
+            ball.load_audio_file(&local_path)?;
             Ok(())
         } else {
             Err(crate::audio_engine::AudioError::LoadError("Ball not found".to_string()))
@@ -301,4 +314,27 @@ impl GameObjectManager {
             Err("Object is not a ball or does not exist".to_string())
         }
     }
+}
+
+// Helper function to copy audio files to the samples directory
+fn copy_audio_file_to_samples(source_path: &str) -> Result<String, Box<dyn std::error::Error>> {
+    use std::path::Path;
+    use std::fs;
+    
+    let source = Path::new(source_path);
+    
+    // Get the filename from the source path
+    let filename = source.file_name()
+        .ok_or("Invalid file path")?
+        .to_str()
+        .ok_or("Invalid filename")?;
+    
+    // Create the destination path in the samples directory
+    let dest_path = format!("samples/{}", filename);
+    let dest = Path::new(&dest_path);
+    
+    // Copy the file
+    fs::copy(source, dest)?;
+    
+    Ok(dest_path)
 }
