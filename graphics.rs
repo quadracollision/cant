@@ -1,8 +1,56 @@
 use pixels::{Pixels, SurfaceTexture};
 use winit::window::Window;
 use crate::grid::GridState;
-use crate::font;
 use crate::game_objects::{GameObjectManager, GameObject};
+use std::time::Instant;
+
+#[derive(Debug)]
+pub struct AudioPlaybackState {
+    pub is_playing: bool,
+    pub start_time: Instant,
+    pub start_sample: f32,
+    pub end_sample: f32,
+    pub playback_duration: f64,
+}
+
+impl AudioPlaybackState {
+    pub fn new() -> Self {
+        Self {
+            is_playing: false,
+            start_time: Instant::now(),
+            start_sample: 0.0,
+            end_sample: 0.0,
+            playback_duration: 0.0,
+        }
+    }
+    
+    pub fn start_playback(&mut self, start_sample: f32, end_sample: f32, duration: f64) {
+        self.is_playing = true;
+        self.start_time = Instant::now();
+        self.start_sample = start_sample;
+        self.end_sample = end_sample;
+        self.playback_duration = duration;
+    }
+    
+    pub fn stop_playback(&mut self) {
+        self.is_playing = false;
+    }
+    
+    pub fn get_current_playback_position(&self) -> Option<f32> {
+        if !self.is_playing {
+            return None;
+        }
+        
+        let elapsed = self.start_time.elapsed().as_secs_f64();
+        if elapsed >= self.playback_duration {
+            return None; // Playback finished
+        }
+        
+        let progress = elapsed / self.playback_duration;
+        let current_sample = self.start_sample + (self.end_sample - self.start_sample) * progress as f32;
+        Some(current_sample)
+    }
+}
 
 pub const GRID_PADDING: u32 = 10;
 // Make console height scale with window size - more conservative sizing
@@ -31,6 +79,8 @@ pub struct GraphicsRenderer {
     waveform_cursor_position: f32,
     waveform_zoom_level: f32,
     waveform_scroll_position: f32,
+    // Audio playback state
+    audio_playback_state: AudioPlaybackState,
 }
 
 impl GraphicsRenderer {
@@ -53,6 +103,8 @@ impl GraphicsRenderer {
             waveform_cursor_position: 0.0,
             waveform_zoom_level: 1.0,
             waveform_scroll_position: 0.0,
+            // Audio playback state
+            audio_playback_state: AudioPlaybackState::new(),
          })
      }
 
@@ -67,411 +119,21 @@ impl GraphicsRenderer {
             filename.to_string()
         };
         
-        // Draw filename at top left (10, 10)
-        let start_x = 10u32;
-        let start_y = 10u32;
+        // Draw filename at top left (10, 10) using the font system
+        let start_x = 10usize;
+        let start_y = 10usize;
+        let font_scale = 1.0; // Use default scale for waveform filename
         
-        // Simple text rendering - draw each character as a small pattern
-        for (char_index, ch) in display_name.chars().enumerate() {
-            let char_x = start_x + (char_index as u32 * 8); // 8 pixels per character
-            if char_x + 8 < self.width {
-                Self::draw_character_static(frame, ch, char_x, start_y, self.width, self.height);
-            }
-        }
-    }
-    
-    // Helper function to draw a simple character
-    fn draw_character_static(frame: &mut [u8], ch: char, x: u32, y: u32, width: u32, height: u32) {
-        let patterns = match ch {
-            'A' | 'a' => vec![
-                " ##### ",
-                "#     #",
-                "#     #",
-                "#######",
-                "#     #",
-                "#     #",
-                "#     #",
-            ],
-            'B' | 'b' => vec![
-                "###### ",
-                "#     #",
-                "#     #",
-                "###### ",
-                "#     #",
-                "#     #",
-                "###### ",
-            ],
-            'C' | 'c' => vec![
-                " ##### ",
-                "#     #",
-                "#      ",
-                "#      ",
-                "#      ",
-                "#     #",
-                " ##### ",
-            ],
-            'D' | 'd' => vec![
-                "###### ",
-                "#     #",
-                "#     #",
-                "#     #",
-                "#     #",
-                "#     #",
-                "###### ",
-            ],
-            'E' | 'e' => vec![
-                "#######",
-                "#      ",
-                "#      ",
-                "##### ",
-                "#      ",
-                "#      ",
-                "#######",
-            ],
-            'F' | 'f' => vec![
-                "#######",
-                "#      ",
-                "#      ",
-                "##### ",
-                "#      ",
-                "#      ",
-                "#      ",
-            ],
-            'G' | 'g' => vec![
-                " ##### ",
-                "#     #",
-                "#      ",
-                "#  ####",
-                "#     #",
-                "#     #",
-                " ##### ",
-            ],
-            'H' | 'h' => vec![
-                "#     #",
-                "#     #",
-                "#     #",
-                "#######",
-                "#     #",
-                "#     #",
-                "#     #",
-            ],
-            'I' | 'i' => vec![
-                "#######",
-                "   #   ",
-                "   #   ",
-                "   #   ",
-                "   #   ",
-                "   #   ",
-                "#######",
-            ],
-            'J' | 'j' => vec![
-                "#######",
-                "      #",
-                "      #",
-                "      #",
-                "      #",
-                "#     #",
-                " ##### ",
-            ],
-            'K' | 'k' => vec![
-                "#     #",
-                "#    # ",
-                "#   #  ",
-                "####   ",
-                "#   #  ",
-                "#    # ",
-                "#     #",
-            ],
-            'L' | 'l' => vec![
-                "#      ",
-                "#      ",
-                "#      ",
-                "#      ",
-                "#      ",
-                "#      ",
-                "#######",
-            ],
-            'M' | 'm' => vec![
-                "#     #",
-                "##   ##",
-                "# # # #",
-                "#  #  #",
-                "#     #",
-                "#     #",
-                "#     #",
-            ],
-            'N' | 'n' => vec![
-                "#     #",
-                "##    #",
-                "# #   #",
-                "#  #  #",
-                "#   # #",
-                "#    ##",
-                "#     #",
-            ],
-            'O' | 'o' => vec![
-                " ##### ",
-                "#     #",
-                "#     #",
-                "#     #",
-                "#     #",
-                "#     #",
-                " ##### ",
-            ],
-            'P' | 'p' => vec![
-                "###### ",
-                "#     #",
-                "#     #",
-                "###### ",
-                "#      ",
-                "#      ",
-                "#      ",
-            ],
-            'Q' | 'q' => vec![
-                " ##### ",
-                "#     #",
-                "#     #",
-                "#     #",
-                "#   # #",
-                "#    # ",
-                " ######",
-            ],
-            'R' | 'r' => vec![
-                "###### ",
-                "#     #",
-                "#     #",
-                "###### ",
-                "#   #  ",
-                "#    # ",
-                "#     #",
-            ],
-            'S' | 's' => vec![
-                " ##### ",
-                "#     #",
-                "#      ",
-                " ##### ",
-                "      #",
-                "#     #",
-                " ##### ",
-            ],
-            'T' | 't' => vec![
-                "#######",
-                "   #   ",
-                "   #   ",
-                "   #   ",
-                "   #   ",
-                "   #   ",
-                "   #   ",
-            ],
-            'U' | 'u' => vec![
-                "#     #",
-                "#     #",
-                "#     #",
-                "#     #",
-                "#     #",
-                "#     #",
-                " ##### ",
-            ],
-            'V' | 'v' => vec![
-                "#     #",
-                "#     #",
-                "#     #",
-                "#     #",
-                " #   # ",
-                "  # #  ",
-                "   #   ",
-            ],
-            'W' | 'w' => vec![
-                "#     #",
-                "#     #",
-                "#     #",
-                "#  #  #",
-                "# # # #",
-                "##   ##",
-                "#     #",
-            ],
-            'X' | 'x' => vec![
-                "#     #",
-                " #   # ",
-                "  # #  ",
-                "   #   ",
-                "  # #  ",
-                " #   # ",
-                "#     #",
-            ],
-            'Y' | 'y' => vec![
-                "#     #",
-                " #   # ",
-                "  # #  ",
-                "   #   ",
-                "   #   ",
-                "   #   ",
-                "   #   ",
-            ],
-            'Z' | 'z' => vec![
-                "#######",
-                "     # ",
-                "    #  ",
-                "   #   ",
-                "  #    ",
-                " #     ",
-                "#######",
-            ],
-            '0' => vec![
-                " ##### ",
-                "#     #",
-                "#     #",
-                "#     #",
-                "#     #",
-                "#     #",
-                " ##### ",
-            ],
-            '1' => vec![
-                "   #   ",
-                "  ##   ",
-                "   #   ",
-                "   #   ",
-                "   #   ",
-                "   #   ",
-                " ##### ",
-            ],
-            '2' => vec![
-                " ##### ",
-                "#     #",
-                "      #",
-                " ##### ",
-                "#      ",
-                "#      ",
-                "#######",
-            ],
-            '3' => vec![
-                " ##### ",
-                "#     #",
-                "      #",
-                " ##### ",
-                "      #",
-                "#     #",
-                " ##### ",
-            ],
-            '4' => vec![
-                "#     #",
-                "#     #",
-                "#     #",
-                "#######",
-                "      #",
-                "      #",
-                "      #",
-            ],
-            '5' => vec![
-                "#######",
-                "#      ",
-                "#      ",
-                "###### ",
-                "      #",
-                "#     #",
-                " ##### ",
-            ],
-            '6' => vec![
-                " ##### ",
-                "#     #",
-                "#      ",
-                "###### ",
-                "#     #",
-                "#     #",
-                " ##### ",
-            ],
-            '7' => vec![
-                "#######",
-                "      #",
-                "     # ",
-                "    #  ",
-                "   #   ",
-                "  #    ",
-                " #     ",
-            ],
-            '8' => vec![
-                " ##### ",
-                "#     #",
-                "#     #",
-                " ##### ",
-                "#     #",
-                "#     #",
-                " ##### ",
-            ],
-            '9' => vec![
-                " ##### ",
-                "#     #",
-                "#     #",
-                " ######",
-                "      #",
-                "#     #",
-                " ##### ",
-            ],
-            '.' => vec![
-                "       ",
-                "       ",
-                "       ",
-                "       ",
-                "       ",
-                "  ##   ",
-                "  ##   ",
-            ],
-            '-' => vec![
-                "       ",
-                "       ",
-                "       ",
-                " ##### ",
-                "       ",
-                "       ",
-                "       ",
-            ],
-            '_' => vec![
-                "       ",
-                "       ",
-                "       ",
-                "       ",
-                "       ",
-                "       ",
-                "#######",
-            ],
-            ' ' => vec![
-                "       ",
-                "       ",
-                "       ",
-                "       ",
-                "       ",
-                "       ",
-                "       ",
-            ],
-            _ => vec![
-                " ##### ",
-                "#     #",
-                "#  #  #",
-                "#     #",
-                "#  #  #",
-                "#     #",
-                " ##### ",
-            ], // Unknown character - draw a box with question mark pattern
-        };
-        
-        for (row, pattern) in patterns.iter().enumerate() {
-            for (col, ch) in pattern.chars().enumerate() {
-                if ch == '#' {
-                    let pixel_x = x + col as u32;
-                    let pixel_y = y + row as u32;
-                    
-                    if pixel_x < width && pixel_y < height {
-                        let pixel_index = ((pixel_y * width + pixel_x) * 4) as usize;
-                        if pixel_index + 3 < frame.len() {
-                            frame[pixel_index] = 255;     // R - White text
-                            frame[pixel_index + 1] = 255; // G
-                            frame[pixel_index + 2] = 255; // B
-                            frame[pixel_index + 3] = 255; // A
-                        }
-                    }
-                }
-            }
-        }
+        crate::font::draw_text_scaled(
+            frame,
+            &display_name,
+            start_x,
+            start_y,
+            [255, 255, 255], // White text
+            false, // Not selected
+            self.width as usize,
+            font_scale,
+        );
     }
     
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -520,15 +182,51 @@ impl GraphicsRenderer {
     }
 
     // Waveform input handling
-    pub fn handle_waveform_input(&mut self, key_code: winit::event::VirtualKeyCode, audio_samples: &[f32]) -> Option<String> {
+    pub fn handle_waveform_input(&mut self, key_code: winit::event::VirtualKeyCode, audio_samples: &[f32], modifiers: winit::event::ModifiersState, slice_markers: &[f32], sample_rate: f32, loaded_sample_key: Option<&str>) -> Option<String> {
         match key_code {
             winit::event::VirtualKeyCode::Left => {
-                if !audio_samples.is_empty() {
-                    let step_size = audio_samples.len() as f32 * 0.01; // 1% of audio length
+                if modifiers.shift() && !slice_markers.is_empty() {
+                    // Shift+Left: Jump to previous slice marker
+                    let current_pos = self.waveform_cursor_position;
+                    let mut prev_marker = None;
+                    
+                    // Find the closest marker to the left of current position
+                    for &marker in slice_markers.iter().rev() {
+                        if marker < current_pos {
+                            prev_marker = Some(marker);
+                            break;
+                        }
+                    }
+                    
+                    if let Some(marker_pos) = prev_marker {
+                        self.waveform_cursor_position = marker_pos;
+                        
+                        // Auto-scroll if cursor goes off-screen
+                        let samples_per_pixel = (audio_samples.len() as f32) / (self.width as f32 * self.waveform_zoom_level);
+                        let cursor_screen_x = (self.waveform_cursor_position / samples_per_pixel) - self.waveform_scroll_position;
+                        
+                        if cursor_screen_x < 0.0 {
+                            self.waveform_scroll_position = (self.waveform_cursor_position / samples_per_pixel) - (self.width as f32 * 0.1);
+                            self.waveform_scroll_position = self.waveform_scroll_position.max(0.0);
+                        }
+                        
+                        Some(format!("Jumped to previous slice marker at position: {:.0}", self.waveform_cursor_position))
+                    } else {
+                        Some("No previous slice marker found".to_string())
+                    }
+                } else if !audio_samples.is_empty() {
+                    // Calculate step size based on zoom level for pixel-precise movement
+                    let samples_per_pixel = (audio_samples.len() as f32) / (self.width as f32 * self.waveform_zoom_level);
+                    let step_size = if self.waveform_zoom_level >= 5.0 {
+                        // At high zoom levels, move by 1 pixel worth of samples
+                        samples_per_pixel.max(1.0)
+                    } else {
+                        // At lower zoom levels, use percentage-based movement
+                        (audio_samples.len() as f32 * 0.01).max(samples_per_pixel)
+                    };
                     self.waveform_cursor_position = (self.waveform_cursor_position - step_size).max(0.0);
                     
                     // Auto-scroll if cursor goes off-screen
-                    let samples_per_pixel = (audio_samples.len() as f32) / (self.width as f32 * self.waveform_zoom_level);
                     let cursor_screen_x = (self.waveform_cursor_position / samples_per_pixel) - self.waveform_scroll_position;
                     
                     if cursor_screen_x < 0.0 {
@@ -542,13 +240,48 @@ impl GraphicsRenderer {
                 }
             }
             winit::event::VirtualKeyCode::Right => {
-                if !audio_samples.is_empty() {
-                    let step_size = audio_samples.len() as f32 * 0.01; // 1% of audio length
+                if modifiers.shift() && !slice_markers.is_empty() {
+                    // Shift+Right: Jump to next slice marker
+                    let current_pos = self.waveform_cursor_position;
+                    let mut next_marker = None;
+                    
+                    // Find the closest marker to the right of current position
+                    for &marker in slice_markers.iter() {
+                        if marker > current_pos {
+                            next_marker = Some(marker);
+                            break;
+                        }
+                    }
+                    
+                    if let Some(marker_pos) = next_marker {
+                        self.waveform_cursor_position = marker_pos;
+                        
+                        // Auto-scroll if cursor goes off-screen
+                        let samples_per_pixel = (audio_samples.len() as f32) / (self.width as f32 * self.waveform_zoom_level);
+                        let cursor_screen_x = (self.waveform_cursor_position / samples_per_pixel) - self.waveform_scroll_position;
+                        
+                        if cursor_screen_x > self.width as f32 {
+                            self.waveform_scroll_position = (self.waveform_cursor_position / samples_per_pixel) - (self.width as f32 * 0.9);
+                        }
+                        
+                        Some(format!("Jumped to next slice marker at position: {:.0}", self.waveform_cursor_position))
+                    } else {
+                        Some("No next slice marker found".to_string())
+                    }
+                } else if !audio_samples.is_empty() {
+                    // Calculate step size based on zoom level for pixel-precise movement
+                    let samples_per_pixel = (audio_samples.len() as f32) / (self.width as f32 * self.waveform_zoom_level);
+                    let step_size = if self.waveform_zoom_level >= 5.0 {
+                        // At high zoom levels, move by 1 pixel worth of samples
+                        samples_per_pixel.max(1.0)
+                    } else {
+                        // At lower zoom levels, use percentage-based movement
+                        (audio_samples.len() as f32 * 0.01).max(samples_per_pixel)
+                    };
                     let max_position = audio_samples.len() as f32;
                     self.waveform_cursor_position = (self.waveform_cursor_position + step_size).min(max_position);
                     
                     // Auto-scroll if cursor goes off-screen
-                    let samples_per_pixel = (audio_samples.len() as f32) / (self.width as f32 * self.waveform_zoom_level);
                     let cursor_screen_x = (self.waveform_cursor_position / samples_per_pixel) - self.waveform_scroll_position;
                     
                     if cursor_screen_x > self.width as f32 {
@@ -561,14 +294,116 @@ impl GraphicsRenderer {
                 }
             }
             winit::event::VirtualKeyCode::Up => {
-                // Zoom in
-                self.waveform_zoom_level = (self.waveform_zoom_level * 1.2).min(10.0);
+                // Zoom in and center on cursor
+                self.waveform_zoom_level = (self.waveform_zoom_level * 1.2).min(100.0);
+
+                if !audio_samples.is_empty() {
+                    let samples_per_pixel = (audio_samples.len() as f32) / (self.width as f32 * self.waveform_zoom_level);
+                    let center_x = self.width as f32 / 2.0;
+                    let mut desired_scroll = (self.waveform_cursor_position / samples_per_pixel) - center_x;
+                    let max_scroll = ((audio_samples.len() as f32) / samples_per_pixel) - self.width as f32;
+                    let max_scroll = max_scroll.max(0.0);
+                    self.waveform_scroll_position = desired_scroll.clamp(0.0, max_scroll);
+                }
+
                 Some(format!("Zoomed in to level: {:.2}", self.waveform_zoom_level))
             }
             winit::event::VirtualKeyCode::Down => {
-                // Zoom out
-                self.waveform_zoom_level = (self.waveform_zoom_level / 1.2).max(0.1);
+                // Zoom out and center on cursor
+                let min_zoom = 1.0;
+                self.waveform_zoom_level = (self.waveform_zoom_level / 1.2).max(min_zoom);
+
+                if !audio_samples.is_empty() {
+                    let samples_per_pixel = (audio_samples.len() as f32) / (self.width as f32 * self.waveform_zoom_level);
+                    let center_x = self.width as f32 / 2.0;
+                    let mut desired_scroll = (self.waveform_cursor_position / samples_per_pixel) - center_x;
+                    let max_scroll = ((audio_samples.len() as f32) / samples_per_pixel) - self.width as f32;
+                    let max_scroll = max_scroll.max(0.0);
+                    self.waveform_scroll_position = desired_scroll.clamp(0.0, max_scroll);
+                }
+
                 Some(format!("Zoomed out to level: {:.2}", self.waveform_zoom_level))
+            }
+            winit::event::VirtualKeyCode::Space => {
+                // Handle Shift+Space for zoom reset
+                if modifiers.shift() {
+                    // Reset zoom to show entire waveform
+                    self.waveform_zoom_level = 1.0;
+                    self.waveform_scroll_position = 0.0;
+                    Some("Zoom reset to show entire waveform".to_string())
+                } else {
+                    // Regular Space is handled in main.rs for slice markers
+                    None
+                }
+            }
+            winit::event::VirtualKeyCode::Return => {
+                // Enter key: Play slice segment from current cursor to next slice marker
+                if !slice_markers.is_empty() && !audio_samples.is_empty() {
+                    let current_pos = self.waveform_cursor_position;
+                    
+                    // Find the current slice marker (closest marker at or before cursor)
+                    let mut current_marker_idx = None;
+                    for (idx, &marker) in slice_markers.iter().enumerate() {
+                        if marker <= current_pos {
+                            current_marker_idx = Some(idx);
+                        } else {
+                            break;
+                        }
+                    }
+                    
+                    if let Some(start_idx) = current_marker_idx {
+                        let start_sample = slice_markers[start_idx] as usize;
+                        let end_sample = if start_idx + 1 < slice_markers.len() {
+                            slice_markers[start_idx + 1] as usize
+                        } else {
+                            audio_samples.len()
+                        };
+                        
+                        // Move cursor to the start of the slice being played
+                        self.waveform_cursor_position = slice_markers[start_idx];
+                        
+                        // Convert sample positions to time for audio playback
+                        // Use actual sample rate from waveform editor
+                        let start_time = start_sample as f64 / sample_rate as f64;
+                        let end_time = end_sample as f64 / sample_rate as f64;
+                        let duration = end_time - start_time;
+                        
+                        println!("DEBUG: Using sample rate: {} Hz", sample_rate);
+                        println!("DEBUG: Sample indices {} to {} converted to time {:.3}s to {:.3}s", 
+                                start_sample, end_sample, start_time, end_time);
+                        
+                        // Start audio playback state tracking
+                        self.audio_playback_state.start_playback(
+                            slice_markers[start_idx], 
+                            slice_markers.get(start_idx + 1).copied().unwrap_or(audio_samples.len() as f32),
+                            duration
+                        );
+                        
+                        // Try to play the slice segment using the audio engine
+                        match crate::audio_engine::with_audio_engine(|engine| {
+                            // Use the loaded sample key from the waveform editor
+                            if let Some(sample_key) = loaded_sample_key {
+                                // Play the specific slice using the public wrapper method
+                                engine.play_sample_slice_public(sample_key, start_time, end_time)
+                            } else {
+                                Err(crate::audio_engine::AudioError::PlaybackError("No audio file loaded in waveform editor".to_string()))
+                            }
+                        }) {
+                            Ok(_) => Some(format!("Playing slice {} (samples {}-{}, {:.2}s-{:.2}s) - Cursor will follow playback", 
+                                       start_idx, start_sample, end_sample, start_time, end_time)),
+                            Err(e) => {
+                                // Stop playback state if audio failed
+                                self.audio_playback_state.stop_playback();
+                                Some(format!("Audio playback failed: {} - Slice {} would play samples {}-{} ({:.2}s-{:.2}s)", 
+                                         e, start_idx, start_sample, end_sample, start_time, end_time))
+                            }
+                        }
+                    } else {
+                        Some("No slice marker found at current position".to_string())
+                    }
+                } else {
+                    Some("No slice markers or audio loaded".to_string())
+                }
             }
             _ => None
         }
@@ -703,8 +538,15 @@ impl GraphicsRenderer {
                 }
             }
             
-            // Draw cursor
-            let cursor_screen_x = ((self.waveform_cursor_position / samples_per_pixel) - self.waveform_scroll_position) as u32;
+            // Update cursor position during playback
+            if self.audio_playback_state.is_playing {
+                if let Some(current_position) = self.audio_playback_state.get_current_playback_position() {
+                    self.waveform_cursor_position = current_position;
+                }
+            }
+            
+            // Draw cursor - align with waveform sample mapping
+            let cursor_screen_x = (self.waveform_cursor_position / samples_per_pixel - self.waveform_scroll_position) as u32;
             if cursor_screen_x < self.width {
                 // Draw thick yellow cursor line spanning the waveform height
                 for cursor_offset in 0..3 { // 3 pixels wide
@@ -1337,130 +1179,21 @@ impl GraphicsRenderer {
                 let slice_number = index + 1; // 1-based indexing for display
                 let number_text = slice_number.to_string();
                 
-                // Simple number rendering - draw each digit as a small pattern at the bottom
-                for (digit_index, digit_char) in number_text.chars().enumerate() {
-                    let digit_x = screen_x + (digit_index as u32 * 8); // 8 pixels per digit
-                    if digit_x + 8 < self.width {
-                        let digit_y = waveform_height.saturating_sub(15); // Draw near bottom of waveform
-                        Self::draw_digit_static(frame, digit_char, digit_x, digit_y, self.width, self.height);
-                    }
-                }
-            }
-        }
-    }
-    
-    // Helper function to draw a simple digit
-    fn draw_digit_static(frame: &mut [u8], digit: char, x: u32, y: u32, width: u32, height: u32) {
-        let patterns = match digit {
-            '0' => vec![
-                "  ###  ",
-                " #   # ",
-                " #   # ",
-                " #   # ",
-                " #   # ",
-                " #   # ",
-                "  ###  ",
-            ],
-            '1' => vec![
-                "   #   ",
-                "  ##   ",
-                "   #   ",
-                "   #   ",
-                "   #   ",
-                "   #   ",
-                " ##### ",
-            ],
-            '2' => vec![
-                " ##### ",
-                "#     #",
-                "      #",
-                " ##### ",
-                "#      ",
-                "#      ",
-                "#######",
-            ],
-            '3' => vec![
-                " ##### ",
-                "#     #",
-                "      #",
-                " ##### ",
-                "      #",
-                "#     #",
-                " ##### ",
-            ],
-            '4' => vec![
-                "#     #",
-                "#     #",
-                "#     #",
-                "#######",
-                "      #",
-                "      #",
-                "      #",
-            ],
-            '5' => vec![
-                "#######",
-                "#      ",
-                "#      ",
-                "###### ",
-                "      #",
-                "#     #",
-                " ##### ",
-            ],
-            '6' => vec![
-                " ##### ",
-                "#     #",
-                "#      ",
-                "###### ",
-                "#     #",
-                "#     #",
-                " ##### ",
-            ],
-            '7' => vec![
-                "#######",
-                "      #",
-                "     # ",
-                "    #  ",
-                "   #   ",
-                "  #    ",
-                " #     ",
-            ],
-            '8' => vec![
-                " ##### ",
-                "#     #",
-                "#     #",
-                " ##### ",
-                "#     #",
-                "#     #",
-                " ##### ",
-            ],
-            '9' => vec![
-                " ##### ",
-                "#     #",
-                "#     #",
-                " ######",
-                "      #",
-                "#     #",
-                " ##### ",
-            ],
-            _ => vec![], // Unknown digit
-        };
-        
-        for (row, pattern) in patterns.iter().enumerate() {
-            for (col, ch) in pattern.chars().enumerate() {
-                if ch == '#' {
-                    let pixel_x = x + col as u32;
-                    let pixel_y = y + row as u32;
-                    
-                    if pixel_x < width && pixel_y < height {
-                        let pixel_index = ((pixel_y * width + pixel_x) * 4) as usize;
-                        if pixel_index + 3 < frame.len() {
-                            frame[pixel_index] = 255;     // R - White text
-                            frame[pixel_index + 1] = 255; // G
-                            frame[pixel_index + 2] = 255; // B
-                            frame[pixel_index + 3] = 255; // A
-                        }
-                    }
-                }
+                // Draw slice number using the font system
+                let digit_x = screen_x as usize;
+                let digit_y = waveform_height.saturating_sub(15) as usize; // Draw near bottom of waveform
+                let font_scale = 0.8; // Smaller scale for slice numbers
+                
+                crate::font::draw_text_scaled(
+                    frame,
+                    &number_text,
+                    digit_x,
+                    digit_y,
+                    [255, 255, 255], // White text
+                    false, // Not selected
+                    self.width as usize,
+                    font_scale,
+                );
             }
         }
     }

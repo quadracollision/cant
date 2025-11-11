@@ -119,7 +119,7 @@ pub enum Stmt {
         sequence: Vec<f64>, // The sequence of marker numbers
     },
     Waveform {    // New: waveform editor command
-        file_path: Option<String>, // Optional audio file path
+        target: Option<String>, // Optional audio file path or ball reference
     },
 }
 

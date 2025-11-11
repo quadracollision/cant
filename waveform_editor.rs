@@ -1,12 +1,12 @@
 use pixels::{Pixels, SurfaceTexture};
 use winit::{
     dpi::LogicalSize,
-    event::{Event, WindowEvent, KeyboardInput, VirtualKeyCode, ElementState, MouseButton},
+    event::{Event, WindowEvent, KeyboardInput, VirtualKeyCode, ElementState, MouseButton, ModifiersState},
     event_loop::{ControlFlow, EventLoop},
     window::{Window, WindowBuilder},
 };
 use std::collections::HashMap;
-use crate::audio_engine::AudioEngine;
+use crate::audio_engine::{AudioEngine, with_audio_engine};
 
 const WIDTH: u32 = 1200;
 const HEIGHT: u32 = 600;
@@ -26,6 +26,8 @@ pub struct WaveformEditor {
     mouse_y: f32,
     is_dragging: bool,
     selected_marker: Option<usize>,
+    loaded_sample_key: Option<String>,  // Track the loaded sample key for audio playback
+    sample_rate: f32,  // Store sample rate for time calculations
 }
 
 impl WaveformEditor {
@@ -47,6 +49,8 @@ impl WaveformEditor {
             mouse_y: 0.0,
             is_dragging: false,
             selected_marker: None,
+            loaded_sample_key: None,
+            sample_rate: 44100.0,  // Default sample rate
         };
 
         // Load audio file if provided
@@ -84,6 +88,8 @@ impl WaveformEditor {
             mouse_y: 0.0,
             is_dragging: false,
             selected_marker: None,
+            loaded_sample_key: None,
+            sample_rate: 44100.0,  // Default sample rate
         };
 
         // Load audio file if provided
@@ -112,6 +118,8 @@ impl WaveformEditor {
             mouse_y: 0.0,
             is_dragging: false,
             selected_marker: None,
+            loaded_sample_key: None,
+            sample_rate: 44100.0,  // Default sample rate
         }
     }
 
@@ -126,26 +134,27 @@ impl WaveformEditor {
     }
 
     pub fn load_audio_from_file(&mut self, file_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-        use std::fs::File;
-        use std::io::BufReader;
-        use rodio::{Decoder, Source};
-
-        // Open and decode the audio file
-        let file = File::open(file_path)?;
-        let buf_reader = BufReader::new(file);
-        let decoder = Decoder::new(buf_reader)?;
+        println!("Loading audio file: {}", file_path);
         
-        // Convert to f32 samples
-        let samples: Vec<f32> = decoder
-            .convert_samples::<f32>()
-            .collect();
+        // Load the audio file into the audio engine
+        let sample_key = with_audio_engine(|engine| {
+            engine.load_audio_file(file_path)
+        })?;
         
+        // Store the sample key for playback
+        self.loaded_sample_key = Some(sample_key);
+        
+        // Load samples for waveform display and get the actual sample rate
+        let (samples, sample_rate) = Self::load_samples_from_file(file_path)?;
+        self.sample_rate = sample_rate;
         self.load_audio(samples);
+        
+        println!("Audio file loaded successfully: {} samples at {} Hz", self.audio_samples.len(), self.sample_rate);
         Ok(())
     }
 
     // Static function to load audio samples without needing a WaveformEditor instance
-    pub fn load_samples_from_file(file_path: &str) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
+    pub fn load_samples_from_file(file_path: &str) -> Result<(Vec<f32>, f32), Box<dyn std::error::Error>> {
         use std::fs::File;
         use std::io::BufReader;
         use std::path::Path;
@@ -169,16 +178,20 @@ impl WaveformEditor {
         let buf_reader = BufReader::new(file);
         let decoder = Decoder::new(buf_reader)?;
         
+        // Get the sample rate before consuming the decoder
+        let sample_rate = decoder.sample_rate() as f32;
+        
         // Convert to f32 samples
         let samples: Vec<f32> = decoder
             .convert_samples::<f32>()
             .collect();
         
-        Ok(samples)
+        Ok((samples, sample_rate))
     }
 
     pub fn run(mut self, event_loop: EventLoop<()>) -> Result<std::collections::HashMap<String, Vec<usize>>, Box<dyn std::error::Error>> {
         let mut slice_arrays = std::collections::HashMap::new();
+        let mut modifiers = ModifiersState::empty();
 
         event_loop.run(move |event, _, control_flow| {
             *control_flow = ControlFlow::Poll;
@@ -223,6 +236,9 @@ impl WaveformEditor {
                             self.add_marker_at_cursor();
                         }
                     }
+                    WindowEvent::ModifiersChanged(new_modifiers) => {
+                        modifiers = new_modifiers;
+                    }
                     WindowEvent::KeyboardInput { input, .. } => {
                         if input.state == ElementState::Pressed {
                             if let Some(keycode) = input.virtual_keycode {
@@ -231,7 +247,11 @@ impl WaveformEditor {
                                         self.preview_current_slice();
                                     }
                                     VirtualKeyCode::Space => {
-                                        self.preview_slice_at_cursor();
+                                        if modifiers.shift() {
+                                            self.reset_view();
+                                        } else {
+                                            self.preview_slice_at_cursor();
+                                        }
                                     }
                                     VirtualKeyCode::Delete => {
                                         self.delete_selected_marker();
@@ -371,41 +391,97 @@ impl WaveformEditor {
     }
 
     fn preview_current_slice(&self) {
-        if self.markers.len() >= 2 {
-            let start_sample = self.markers[0] as usize;
-            let end_sample = self.markers[1] as usize;
-            println!("Previewing current slice: {} to {}", start_sample, end_sample);
-            // TODO: Implement actual audio playback
+        if let Some(ref sample_key) = self.loaded_sample_key {
+            if self.markers.len() >= 2 {
+                // Markers are stored as sample indices, convert them to time
+                let start_sample_index = self.markers[0] as f64;
+                let end_sample_index = self.markers[1] as f64;
+                
+                // Convert sample indices to time in seconds
+                let start_time = start_sample_index / self.sample_rate as f64;
+                let end_time = end_sample_index / self.sample_rate as f64;
+                
+                println!("Previewing current slice: sample indices {} to {} (time: {:.3}s to {:.3}s)", 
+                         start_sample_index, end_sample_index, start_time, end_time);
+                
+                // Play the slice using the audio engine
+                if let Err(e) = with_audio_engine(|engine| {
+                    engine.play_sample_slice_public(sample_key, start_time, end_time)
+                }) {
+                    eprintln!("Failed to play slice: {}", e);
+                }
+            } else {
+                println!("Need at least 2 markers to preview a slice");
+            }
+        } else {
+            println!("No audio sample loaded");
         }
     }
 
     fn preview_slice_at_cursor(&self) {
-        let cursor_time = self.mouse_position_to_time(self.mouse_x);
-        
-        // Find the slice that contains the cursor
-        for i in 0..self.markers.len() - 1 {
-            if cursor_time >= self.markers[i] && cursor_time <= self.markers[i + 1] {
-                let start_sample = self.markers[i] as usize;
-                let end_sample = self.markers[i + 1] as usize;
-                println!("Previewing slice at cursor: {} to {}", start_sample, end_sample);
-                // TODO: Implement actual audio playback
-                break;
+        if let Some(ref sample_key) = self.loaded_sample_key {
+            let cursor_sample_index = self.mouse_position_to_time(self.mouse_x);
+            
+            // Find the slice that contains the cursor
+            for i in 0..self.markers.len().saturating_sub(1) {
+                if cursor_sample_index >= self.markers[i] && cursor_sample_index <= self.markers[i + 1] {
+                    let start_sample_index = self.markers[i] as f64;
+                    let end_sample_index = self.markers[i + 1] as f64;
+                    
+                    // Convert sample indices to time in seconds
+                    let start_time = start_sample_index / self.sample_rate as f64;
+                    let end_time = end_sample_index / self.sample_rate as f64;
+                    
+                    println!("Previewing slice at cursor: sample indices {} to {} (time: {:.3}s to {:.3}s)", 
+                             start_sample_index, end_sample_index, start_time, end_time);
+                    
+                    // Play the slice using the audio engine
+                    if let Err(e) = with_audio_engine(|engine| {
+                        engine.play_sample_slice_public(sample_key, start_time, end_time)
+                    }) {
+                        eprintln!("Failed to play slice: {}", e);
+                    }
+                    return;
+                }
             }
+            
+            // If no slice found, play from cursor to end of sample
+            if !self.audio_samples.is_empty() {
+                let cursor_sample_index = cursor_sample_index as f64;
+                let end_sample_index = self.audio_samples.len() as f64;
+                
+                let start_time = cursor_sample_index / self.sample_rate as f64;
+                let end_time = end_sample_index / self.sample_rate as f64;
+                
+                println!("Previewing from cursor to end: sample indices {} to {} (time: {:.3}s to {:.3}s)", 
+                         cursor_sample_index, end_sample_index, start_time, end_time);
+                
+                if let Err(e) = with_audio_engine(|engine| {
+                    engine.play_sample_slice_public(sample_key, start_time, end_time)
+                }) {
+                    eprintln!("Failed to play from cursor: {}", e);
+                }
+            }
+        } else {
+            println!("No audio sample loaded");
         }
     }
 
     fn move_cursor_left(&mut self) {
         if !self.audio_samples.is_empty() {
-            let step_size = self.audio_samples.len() as f32 * 0.01; // 1% of audio length
+            // Calculate step size based on screen pixels for more precise movement when zoomed in
+            let samples_per_pixel = (self.audio_samples.len() as f32) / (WIDTH as f32 * self.zoom_level);
+            let step_size = samples_per_pixel.max(1.0); // Move by one pixel worth of samples, minimum 1 sample
+            
             let old_position = self.cursor_position;
             self.cursor_position = (self.cursor_position - step_size).max(0.0);
             
             // Debug output
             let cursor_screen_x = self.time_to_screen_x(self.cursor_position);
-            println!("Cursor moved left: {} -> {}, screen_x: {}", old_position, self.cursor_position, cursor_screen_x);
+            println!("Cursor moved left: {} -> {}, screen_x: {}, step_size: {:.2}", 
+                     old_position, self.cursor_position, cursor_screen_x, step_size);
             
             // Auto-scroll if cursor goes off-screen
-            let samples_per_pixel = (self.audio_samples.len() as f32) / (WIDTH as f32 * self.zoom_level);
             let cursor_screen_x = (self.cursor_position / samples_per_pixel) - self.scroll_position;
             
             if cursor_screen_x < 0.0 {
@@ -418,17 +494,20 @@ impl WaveformEditor {
 
     fn move_cursor_right(&mut self) {
         if !self.audio_samples.is_empty() {
-            let step_size = self.audio_samples.len() as f32 * 0.01; // 1% of audio length
+            // Calculate step size based on screen pixels for more precise movement when zoomed in
+            let samples_per_pixel = (self.audio_samples.len() as f32) / (WIDTH as f32 * self.zoom_level);
+            let step_size = samples_per_pixel.max(1.0); // Move by one pixel worth of samples, minimum 1 sample
+            
             let max_position = self.audio_samples.len() as f32;
             let old_position = self.cursor_position;
             self.cursor_position = (self.cursor_position + step_size).min(max_position);
             
             // Debug output
             let cursor_screen_x = self.time_to_screen_x(self.cursor_position);
-            println!("Cursor moved right: {} -> {}, screen_x: {}", old_position, self.cursor_position, cursor_screen_x);
+            println!("Cursor moved right: {} -> {}, screen_x: {}, step_size: {:.2}", 
+                     old_position, self.cursor_position, cursor_screen_x, step_size);
             
             // Auto-scroll if cursor goes off-screen
-            let samples_per_pixel = (self.audio_samples.len() as f32) / (WIDTH as f32 * self.zoom_level);
             let cursor_screen_x = (self.cursor_position / samples_per_pixel) - self.scroll_position;
             
             if cursor_screen_x > WIDTH as f32 {
@@ -445,11 +524,43 @@ impl WaveformEditor {
     }
 
     fn zoom_in(&mut self) {
-        self.zoom_level = (self.zoom_level * 1.2).min(10.0);
+        self.zoom_level = (self.zoom_level * 1.2).min(100.0);
+
+        if !self.audio_samples.is_empty() {
+            let samples_per_pixel = (self.audio_samples.len() as f32) / (WIDTH as f32 * self.zoom_level);
+            let center_x = WIDTH as f32 / 2.0;
+            let mut desired_scroll = (self.cursor_position / samples_per_pixel) - center_x;
+            let max_scroll = ((self.audio_samples.len() as f32) / samples_per_pixel) - WIDTH as f32;
+            let max_scroll = max_scroll.max(0.0);
+            self.scroll_position = desired_scroll.clamp(0.0, max_scroll);
+        }
+
+        println!("Zoomed in: zoom_level = {}, centered on cursor", self.zoom_level);
     }
 
     fn zoom_out(&mut self) {
-        self.zoom_level = (self.zoom_level / 1.2).max(0.1);
+        // Calculate minimum zoom level to show entire waveform
+        let min_zoom = 1.0; // Minimum zoom is 1.0 to show the entire waveform
+        self.zoom_level = (self.zoom_level / 1.2).max(min_zoom);
+
+        // Center the view on the cursor when zooming out, clamped to bounds
+        if !self.audio_samples.is_empty() {
+            let samples_per_pixel = (self.audio_samples.len() as f32) / (WIDTH as f32 * self.zoom_level);
+            let center_x = WIDTH as f32 / 2.0;
+            let mut desired_scroll = (self.cursor_position / samples_per_pixel) - center_x;
+            let max_scroll = ((self.audio_samples.len() as f32) / samples_per_pixel) - WIDTH as f32;
+            let max_scroll = max_scroll.max(0.0);
+            self.scroll_position = desired_scroll.clamp(0.0, max_scroll);
+        }
+
+        println!("Zoomed out: zoom_level = {}, centered on cursor", self.zoom_level);
+    }
+
+    fn reset_view(&mut self) {
+        self.zoom_level = 1.0;
+        self.scroll_position = 0.0;
+        println!("View reset to default: zoom_level = {}, scroll_position = {}", 
+                 self.zoom_level, self.scroll_position);
     }
 
     pub fn render(&mut self) {
@@ -583,15 +694,37 @@ impl WaveformEditor {
     // Slice marker methods
     pub fn add_slice_marker(&mut self) {
         self.slice_markers.push(self.cursor_position);
+        // Sort markers by position and renumber them
+        self.reorder_slice_markers();
         println!("Added slice marker at position: {}", self.cursor_position);
+    }
+
+    // Reorder slice markers by position and maintain sequential numbering
+    fn reorder_slice_markers(&mut self) {
+        // Sort markers by their position
+        self.slice_markers.sort_by(|a, b| a.partial_cmp(b).unwrap());
     }
 
     pub fn get_slice_markers(&self) -> &Vec<f32> {
         &self.slice_markers
     }
 
+    pub fn remove_slice_marker(&mut self, index: usize) {
+        if index < self.slice_markers.len() {
+            let removed_marker = self.slice_markers.remove(index);
+            println!("Removed slice marker at position: {}", removed_marker);
+        }
+    }
+
     pub fn clear_slice_markers(&mut self) {
         self.slice_markers.clear();
+    }
+    
+    pub fn load_slice_markers(&mut self, markers: Vec<f32>) {
+        let marker_count = markers.len();
+        self.slice_markers = markers;
+        self.reorder_slice_markers();
+        println!("Loaded {} slice markers", marker_count);
     }
 
     // Method to update cursor position from external source (for integrated mode)
@@ -601,5 +734,13 @@ impl WaveformEditor {
 
     pub fn get_cursor_position(&self) -> f32 {
         self.cursor_position
+    }
+
+    pub fn get_sample_rate(&self) -> f32 {
+        self.sample_rate
+    }
+
+    pub fn get_loaded_sample_key(&self) -> Option<&str> {
+        self.loaded_sample_key.as_deref()
     }
 }

@@ -380,7 +380,7 @@ impl Interpreter {
             },
             Stmt::Run { script_name } => self.execute_run_command(script_name),
             Stmt::Slice { sequence } => self.execute_slice_command(sequence),
-            Stmt::Waveform { file_path } => self.execute_waveform_command(file_path),
+            Stmt::Waveform { target } => self.execute_waveform_command(target),
         }
     }
 
@@ -1783,8 +1783,15 @@ pub fn is_verbose_mode(&self) -> bool {
             return Err(InterpreterError::RuntimeError("No slice markers found. Place markers using spacebar in waveform mode.".to_string()));
         }
         
-        // Convert f32 positions to f64 for audio engine
-        let markers_f64: Vec<f64> = slice_markers.iter().map(|&x| x as f64).collect();
+        // Convert sample indices to time in seconds using the editor's sample rate
+        let sample_rate = waveform_editor.get_sample_rate() as f64;
+        if sample_rate <= 0.0 {
+            return Err(InterpreterError::RuntimeError("Invalid sample rate; cannot convert slice markers to time".to_string()));
+        }
+        let markers_in_seconds: Vec<f64> = slice_markers
+            .iter()
+            .map(|&idx| (idx as f64) / sample_rate)
+            .collect();
         
         // Generate a unique slice array name
         let array_name = format!("slice_array_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
@@ -1792,15 +1799,19 @@ pub fn is_verbose_mode(&self) -> bool {
         // Create indices for each slice (0-based)
         let indices: Vec<usize> = (0..slice_markers.len().saturating_sub(1)).collect();
         
-        // Set the markers in the audio engine
-        if let Err(e) = crate::audio_engine::set_sample_markers(sample_key, markers_f64) {
+        // Set the time-based markers in the audio engine for accurate playback mapping
+        if let Err(e) = crate::audio_engine::set_sample_markers(sample_key, markers_in_seconds) {
             return Err(InterpreterError::RuntimeError(format!("Failed to set sample markers: {}", e)));
         }
         
         // Create the slice array
         match crate::audio_engine::create_slice_array(array_name.clone(), sample_key.to_string(), indices) {
             Ok(()) => {
-                println!("Created slice array '{}' with {} slices from markers", array_name, slice_markers.len().saturating_sub(1));
+                println!(
+                    "Created slice array '{}' with {} slices from markers (time-based)",
+                    array_name,
+                    slice_markers.len().saturating_sub(1)
+                );
                 Ok(array_name)
             },
             Err(e) => Err(InterpreterError::RuntimeError(format!("Failed to create slice array: {}", e)))
@@ -1837,51 +1848,146 @@ pub fn is_verbose_mode(&self) -> bool {
             .map(|&n| if n >= 1.0 { (n as usize).saturating_sub(1) } else { 0 })
             .collect();
         
-        // For now, we'll store this slice array with a default name based on the current script owner
-        let array_name = if let Some(owner_id) = self.current_script_owner {
-            // Get the object's friendly name to use as the slice array name
+        // Get the slice array name and sample key based on the current script owner
+        let (array_name, sample_key) = if let Some(owner_id) = self.current_script_owner {
+            // Get the object's friendly name and audio file
             if let Some(obj) = self.game_objects.get_object(owner_id) {
                 match obj {
                     crate::game_objects::GameObject::Square(square) => {
-                        format!("slice_{}", square.get_friendly_name())
+                        let name = format!("square_{}_slice", square.id);
+                        // For squares, we need to find the colliding ball's audio file
+                        // Check if there's a collision context with a ball
+                        let sample_key = if let Some(ball_id) = self.get_colliding_ball_id(square.id) {
+                            if let Some(GameObject::Ball(ball)) = self.game_objects.get_object(ball_id) {
+                                ball.audio_file.clone().unwrap_or_else(|| {
+                                    println!("Warning: Colliding ball {} has no audio file loaded, using default", ball.get_friendly_name());
+                                    "default_sample".to_string()
+                                })
+                            } else {
+                                "default_sample".to_string()
+                            }
+                        } else {
+                            "default_sample".to_string()
+                        };
+                        (name, sample_key)
                     },
                     crate::game_objects::GameObject::Ball(ball) => {
-                        format!("slice_{}", ball.get_friendly_name())
+                        let name = format!("slice_{}", ball.get_friendly_name());
+                        // Use the ball's actual audio file sample key
+                        let sample_key = ball.audio_file.clone().unwrap_or_else(|| {
+                            println!("Warning: Ball {} has no audio file loaded, using default", ball.get_friendly_name());
+                            "default_sample".to_string()
+                        });
+                        (name, sample_key)
                     }
                 }
             } else {
-                format!("slice_{}", owner_id)
+                (format!("slice_{}", owner_id), "default_sample".to_string())
             }
         } else {
-            "default_slice".to_string()
+            ("default_slice".to_string(), "default_sample".to_string())
         };
         
-        // For now, we'll assume there's a default sample loaded
-        // In a real implementation, you might want to specify which sample to use
-        let sample_key = "default_sample".to_string();
+        // Check if the sample has slice markers, if not create default ones
+        let needs_default_markers = match crate::audio_engine::get_sample_markers(&sample_key) {
+            Ok(markers) => markers.is_empty(),
+            Err(_) => {
+                println!("Debug: Sample '{}' not found, cannot create slice array", sample_key);
+                return Ok(Value::String(format!("Sample not found: {}", sample_key)));
+            }
+        };
+        
+        if needs_default_markers {
+            // Create default slice markers that span the entire sample: [0.0, duration]
+            // This ensures a single slice covering the full audio when no markers exist.
+            // Get the actual sample duration
+            let sample_duration = match crate::audio_engine::get_sample_duration(&sample_key) {
+                Ok(duration) => duration,
+                Err(e) => {
+                    println!("Debug: Failed to get sample duration for '{}': {}, using default 10 seconds", sample_key, e);
+                    10.0 // Fallback to 10 seconds
+                }
+            };
+
+            let default_markers = vec![0.0, sample_duration];
+
+            // Set the default markers
+            if let Err(e) = crate::audio_engine::set_sample_markers(&sample_key, default_markers.clone()) {
+                println!("Debug: Failed to set default markers: {}", e);
+            } else {
+                println!(
+                    "Debug: Created start/end slice markers for sample '{}' (duration: {:.2}s): {:?}",
+                    sample_key,
+                    sample_duration,
+                    default_markers
+                );
+            }
+        }
         
         // Create the slice array using the audio engine
-        match crate::audio_engine::create_slice_array(array_name.clone(), sample_key, indices) {
+        match crate::audio_engine::create_slice_array(array_name.clone(), sample_key.clone(), indices) {
             Ok(()) => {
-                println!("Debug: Created slice array '{}' with sequence: {:?}", array_name, sequence);
+                println!("Debug: Created slice array '{}' with sample '{}' and sequence: {:?}", array_name, sample_key, sequence);
                 Ok(Value::String(format!("Created slice array: {}", array_name)))
             },
             Err(e) => {
-                // If the default sample doesn't exist, just store the sequence for later use
-                println!("Debug: Audio engine error ({}), storing slice sequence for later", e);
-                Ok(Value::String(format!("Stored slice sequence: {:?}", sequence)))
+                // If the sample doesn't exist, provide more helpful error information
+                println!("Debug: Audio engine error ({}), failed to create slice array '{}' with sample '{}'", e, array_name, sample_key);
+                Ok(Value::String(format!("Failed to create slice array: {}", e)))
             }
         }
     }
 
-    fn execute_waveform_command(&mut self, file_path: &Option<String>) -> Result<Value, InterpreterError> {
-        match file_path {
-            Some(path) => {
-                // Set waveform mode request flag with specific file
-                self.waveform_mode_requested = true;
-                self.waveform_file_path = file_path.clone();
+    // Helper function to get the ball ID that's currently colliding with a square
+    fn get_colliding_ball_id(&self, square_id: u32) -> Option<u32> {
+        // Check environment variables for collision context
+        for (key, value) in &self.environment {
+            if key.starts_with("hits(") && key.contains(&format!(",{}", square_id)) {
+                // Extract ball ID from "hits(ball_id,square_id)" format
+                if let Some(start) = key.find('(') {
+                    if let Some(comma) = key.find(',') {
+                        let ball_id_str = &key[start + 1..comma];
+                        if let Ok(ball_id) = ball_id_str.parse::<u32>() {
+                            return Some(ball_id);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn execute_waveform_command(&mut self, target: &Option<String>) -> Result<Value, InterpreterError> {
+        match target {
+            Some(target_str) => {
+                // Check if this is a ball reference
+                if let Some(ball_id) = self.game_objects.find_object_by_name(target_str) {
+                    if self.game_objects.is_ball(ball_id) {
+                        // Get the ball's audio file
+                        if let Some(ball) = self.game_objects.get_object(ball_id) {
+                            if let crate::game_objects::GameObject::Ball(ball) = ball {
+                                if let Some(audio_file) = &ball.audio_file {
+                                    // Set waveform mode request flag with the ball's audio file
+                                    self.waveform_mode_requested = true;
+                                    self.waveform_file_path = Some(audio_file.clone());
+                                    
+                                    println!("Waveform editor mode requested for ball {} with audio file: {}", target_str, audio_file);
+                                    
+                                    return Ok(Value::String(format!("Waveform editor mode activated for {}", target_str)));
+                                } else {
+                                    return Ok(Value::String(format!("Ball {} has no audio sample loaded", target_str)));
+                                }
+                            }
+                        }
+                        return Err(InterpreterError::RuntimeError(format!("Failed to access ball {}", target_str)));
+                    }
+                }
                 
-                println!("Waveform editor mode requested with file path: {:?}", file_path);
+                // If not a ball reference, treat as a file path
+                self.waveform_mode_requested = true;
+                self.waveform_file_path = target.clone();
+                
+                println!("Waveform editor mode requested with file path: {:?}", target);
                 
                 Ok(Value::String("Waveform editor mode activated".to_string()))
             }

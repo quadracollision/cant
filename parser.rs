@@ -997,7 +997,7 @@ impl Parser {
         };
         
         self.consume_newline_or_semicolon()?;
-        Ok(Stmt::Waveform { file_path })
+        Ok(Stmt::Waveform { target: file_path })
     }
 
     fn parse_implicit_block(&mut self) -> Result<Vec<Stmt>, ParseError> {

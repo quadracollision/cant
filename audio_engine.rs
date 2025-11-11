@@ -170,6 +170,33 @@ impl AudioEngine {
         Ok(())
     }
     
+    pub fn get_sample_markers(&self, sample_key: &str) -> Result<Vec<f64>, AudioError> {
+        let sample = self.samples.get(sample_key)
+            .ok_or_else(|| AudioError::PlaybackError(format!("Sample not found: {}", sample_key)))?;
+        
+        Ok(sample.slice_markers.clone())
+    }
+    
+    pub fn get_sample_duration(&self, sample_key: &str) -> Result<f64, AudioError> {
+        let sample = self.samples.get(sample_key)
+            .ok_or_else(|| AudioError::PlaybackError(format!("Sample not found: {}", sample_key)))?;
+        
+        // Clone the data to avoid lifetime issues
+        let data_clone = sample.data.as_ref().clone();
+        let cursor = std::io::Cursor::new(data_clone);
+        let decoder = Decoder::new(cursor)
+            .map_err(|e| AudioError::PlaybackError(format!("Cannot decode sample: {}", e)))?;
+        
+        let sample_rate = decoder.sample_rate() as f64;
+        let channels = decoder.channels() as f64;
+        
+        // Get total samples by consuming the decoder
+        let total_samples = decoder.count() as f64;
+        let duration = total_samples / (sample_rate * channels);
+        
+        Ok(duration)
+    }
+    
     pub fn play_slice_array(&mut self, array_name: &str) -> Result<(), AudioError> {
         // First, extract all the needed values without holding mutable references
         let (sample_key, current_marker_index, sequence_len) = {
@@ -188,8 +215,12 @@ impl AudioEngine {
         let sample = self.samples.get(&sample_key)
             .ok_or_else(|| AudioError::PlaybackError(format!("Sample not found: {}", sample_key)))?;
         
+        println!("Debug: play_slice_array - Sample '{}' has {} markers: {:?}", 
+                 sample_key, sample.slice_markers.len(), sample.slice_markers);
+        
         // If no markers are set, play the whole sample
         if sample.slice_markers.is_empty() {
+            println!("Debug: No markers found, playing entire sample");
             self.play_sample(&sample_key)?;
         } else {
             // Validate marker index
@@ -205,6 +236,10 @@ impl AudioEngine {
                 f64::INFINITY
             };
             
+            println!("Debug: Playing slice {} from {:.2}s to {:.2}s", 
+                     current_marker_index, start_time, 
+                     if end_time == f64::INFINITY { -1.0 } else { end_time });
+            
             // Play the slice from start_time to end_time
             self.play_sample_slice(&sample_key, start_time, end_time)?;
         }
@@ -217,6 +252,10 @@ impl AudioEngine {
         Ok(())
     }
     
+    pub fn play_sample_slice_public(&self, sample_key: &str, start_time: f64, end_time: f64) -> Result<(), AudioError> {
+        self.play_sample_slice(sample_key, start_time, end_time)
+    }
+
     fn play_sample_slice(&self, sample_key: &str, start_time: f64, end_time: f64) -> Result<(), AudioError> {
         let sample = self.samples.get(sample_key)
             .ok_or_else(|| AudioError::PlaybackError(format!("Sample not found: {}", sample_key)))?;
@@ -296,6 +335,16 @@ pub fn set_sample_markers(sample_key: &str, markers: Vec<f64>) -> Result<(), Aud
     with_audio_engine(|engine| {
         engine.set_sample_markers(sample_key, markers)
     })
+}
+
+pub fn get_sample_markers(sample_key: &str) -> Result<Vec<f64>, AudioError> {
+    with_audio_engine(|engine| {
+        engine.get_sample_markers(sample_key)
+    })
+}
+
+pub fn get_sample_duration(sample_key: &str) -> Result<f64, AudioError> {
+    with_audio_engine(|engine| engine.get_sample_duration(sample_key))
 }
 
 pub fn play_slice_array(array_name: &str) -> Result<(), AudioError> {

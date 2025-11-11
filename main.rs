@@ -85,6 +85,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut redraw_requested = false;
     let mut input_mapper = InputMapper::new();
     let mut mouse_position: PhysicalPosition<f64> = PhysicalPosition::new(0.0, 0.0);
+    let mut modifiers_state = winit::event::ModifiersState::empty();
     
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
@@ -102,6 +103,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     WindowEvent::CursorMoved { position, .. } => {
                         mouse_position = position;
                     }
+                    WindowEvent::ModifiersChanged(new_modifiers) => {
+                        modifiers_state = new_modifiers;
+                    }
                     WindowEvent::MouseInput { 
                         state: ElementState::Pressed,
                         button: MouseButton::Left,
@@ -118,29 +122,105 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 if input.state == winit::event::ElementState::Pressed {
                                     match key_code {
                                         winit::event::VirtualKeyCode::Escape => {
+                                            // Save slice markers before closing waveform editor
+                                            if let Some(ref editor) = waveform_editor {
+                                                let slice_markers = editor.get_slice_markers();
+                                                if !slice_markers.is_empty() {
+                                                    if let Some(sample_key) = editor.get_loaded_sample_key() {
+                                                        // Convert sample indices to time in seconds
+                                                        let sample_rate = editor.get_sample_rate();
+                                                        let markers_in_seconds: Vec<f64> = slice_markers.iter()
+                                                            .map(|&sample_index| (sample_index as f64) / (sample_rate as f64))
+                                                            .collect();
+                                                        
+                                                        // Save time-based markers to audio engine
+                                                        match crate::audio_engine::set_sample_markers(sample_key, markers_in_seconds) {
+                                                            Ok(()) => {
+                                                                console.add_output(&format!("Saved {} slice markers for sample: {}", slice_markers.len(), sample_key));
+                                                            },
+                                                            Err(e) => {
+                                                                console.add_output(&format!("Failed to save slice markers: {}", e));
+                                                            }
+                                                        }
+                                                    } else {
+                                                        console.add_output("No sample loaded - slice markers not saved");
+                                                    }
+                                                } else {
+                                                    console.add_output("No slice markers to save");
+                                                }
+                                            }
+                                            
                                             waveform_mode = false;
                                             waveform_editor = None;
                                             console.add_output("Waveform editor closed");
                                             redraw_requested = true;
                                         }
                                         winit::event::VirtualKeyCode::Space => {
-                                            // Add slice marker at cursor position
-                                            if let Some(ref mut editor) = waveform_editor {
-                                                // Get cursor position from graphics module and sync it with waveform editor
-                                                let (cursor_pos, _, _) = graphics.get_waveform_state();
-                                                editor.set_cursor_position(cursor_pos);
-                                                editor.add_slice_marker();
-                                                let message = format!("Slice marker added at position: {}", cursor_pos);
-                                                console.add_output(&message);
-                                                redraw_requested = true;
-                                            } else {
-                                                console.add_output("No waveform editor available");
-                                                redraw_requested = true;
-                                            }
+                            // Only handle Space when no modifiers are pressed
+                            // Let Shift+Space be handled by graphics module for zoom reset
+                            if !modifiers_state.shift() && !modifiers_state.ctrl() && !modifiers_state.alt() {
+                                // Check if cursor is on an existing slice marker
+                                if let Some(ref mut editor) = waveform_editor {
+                                    // Get cursor position from graphics module and sync it with waveform editor
+                                    let (cursor_pos, _, _) = graphics.get_waveform_state();
+                                    editor.set_cursor_position(cursor_pos);
+                                    
+                                    // Check if there's a slice marker at the current cursor position
+                                    let slice_markers = editor.get_slice_markers();
+                                    let mut marker_found = false;
+                                    
+                                    // Look for a marker within a small tolerance (e.g., 100 samples)
+                                    let tolerance = 100.0;
+                                    for (idx, &marker) in slice_markers.iter().enumerate() {
+                                        if (marker - cursor_pos).abs() <= tolerance {
+                                            // Remove the marker
+                                            editor.remove_slice_marker(idx);
+                                            let message = format!("Slice marker removed at position: {}", marker);
+                                            console.add_output(&message);
+                                            marker_found = true;
+                                            break;
                                         }
+                                    }
+                                    
+                                    if !marker_found {
+                                        // Add slice marker at cursor position
+                                        editor.add_slice_marker();
+                                        let message = format!("Slice marker added at position: {}", cursor_pos);
+                                        console.add_output(&message);
+                                    }
+                                    
+                                    redraw_requested = true;
+                                } else {
+                                    console.add_output("No waveform editor available");
+                                    redraw_requested = true;
+                                }
+                            } else {
+                                // Let graphics module handle Space with modifiers (like Shift+Space)
+                                if let Some(ref editor) = waveform_editor {
+                                    let slice_markers = editor.get_slice_markers();
+                                    let sample_rate = editor.get_sample_rate();
+                                    let loaded_sample_key = editor.get_loaded_sample_key();
+                                    if let Some(message) = graphics.handle_waveform_input(key_code, &waveform_audio_samples, modifiers_state, slice_markers, sample_rate, loaded_sample_key) {
+                                        console.add_output(&message);
+                                        redraw_requested = true;
+                                    }
+                                } else if let Some(message) = graphics.handle_waveform_input(key_code, &waveform_audio_samples, modifiers_state, &[], 44100.0, None) {
+                                    console.add_output(&message);
+                                    redraw_requested = true;
+                                }
+                            }
+                        }
                                         _ => {
                                             // Delegate waveform input handling to graphics module
-                                            if let Some(message) = graphics.handle_waveform_input(key_code, &waveform_audio_samples) {
+                                            if let Some(ref editor) = waveform_editor {
+                                                let slice_markers = editor.get_slice_markers();
+                                                let sample_rate = editor.get_sample_rate();
+                                                let loaded_sample_key = editor.get_loaded_sample_key();
+                                                if let Some(message) = graphics.handle_waveform_input(key_code, &waveform_audio_samples, modifiers_state, slice_markers, sample_rate, loaded_sample_key) {
+                                                    console.add_output(&message);
+                                                    redraw_requested = true;
+                                                }
+                                            } else if let Some(message) = graphics.handle_waveform_input(key_code, &waveform_audio_samples, modifiers_state, &[], 44100.0, None) {
                                                 console.add_output(&message);
                                                 redraw_requested = true;
                                             }
@@ -286,14 +366,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     waveform_filename = file_path.clone();
                     
                     // Load audio samples if file path is provided
+                    let mut audio_file_path: Option<String> = None;
                     if let Some(path) = &file_path {
                         // Copy file to samples directory and get local path
                         match copy_audio_file_to_samples(path) {
                             Ok(local_path) => {
                                 console.add_output(&format!("Copied audio file to: {}", local_path));
                                 match crate::waveform_editor::WaveformEditor::load_samples_from_file(&local_path) {
-                                    Ok(samples) => {
+                                    Ok((samples, _sample_rate)) => {
                                         waveform_audio_samples = samples;
+                                        audio_file_path = Some(local_path);
                                         console.add_output(&format!("Loaded {} audio samples", waveform_audio_samples.len()));
                                     }
                                     Err(e) => {
@@ -306,8 +388,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 console.add_output(&format!("Failed to copy audio file: {}", e));
                                 // Try loading from original path as fallback
                                 match crate::waveform_editor::WaveformEditor::load_samples_from_file(path) {
-                                    Ok(samples) => {
+                                    Ok((samples, _sample_rate)) => {
                                         waveform_audio_samples = samples;
+                                        audio_file_path = Some(path.clone());
                                         console.add_output(&format!("Loaded {} audio samples from original path", waveform_audio_samples.len()));
                                     }
                                     Err(e) => {
@@ -326,6 +409,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         waveform_editor = Some(crate::waveform_editor::WaveformEditor::new_integrated());
                         if let Some(ref mut editor) = waveform_editor {
                             editor.load_audio(waveform_audio_samples.clone());
+                            
+                            // Load the audio file into the audio engine for playback
+                            if let Some(ref file_path) = audio_file_path {
+                                if let Err(e) = editor.load_audio_from_file(file_path) {
+                                    console.add_output(&format!("Failed to load audio file into engine: {}", e));
+                                } else {
+                                    console.add_output("Audio file loaded into engine for playback");
+                                    
+                                    // Try to load previously saved slice markers
+                                    if let Some(sample_key) = editor.get_loaded_sample_key() {
+                                        match crate::audio_engine::get_sample_markers(sample_key) {
+                                            Ok(saved_markers) => {
+                                                if !saved_markers.is_empty() {
+                                                    // Convert f64 markers back to f32 for the waveform editor
+                                                    let markers_f32: Vec<f32> = saved_markers.iter().map(|&x| x as f32).collect();
+                                                    editor.load_slice_markers(markers_f32);
+                                                    console.add_output(&format!("Loaded {} previously saved slice markers", saved_markers.len()));
+                                                }
+                                            }
+                                            Err(e) => {
+                                                console.add_output(&format!("Could not load saved markers: {}", e));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                         console.add_output("Waveform mode activated (integrated mode) with editor");
                     } else {
